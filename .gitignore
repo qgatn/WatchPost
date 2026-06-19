@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+dist/
+dist-ssr/
+
+# Rust / Tauri build artifacts
+target/
+**/target/
+Cargo.lock.orig
+
+# Tauri generated
+src-tauri/gen/
+
+# Env / secrets
+.env
+.env.*
+*.local
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.log
+
+# Misc
+Name
