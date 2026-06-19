@@ -67,8 +67,10 @@ Approach: send a single batched command, parse two samples ~1s apart for rates.
 ## Roadmap (milestones)
 
 - [x] **M0 — Setup**: docs, git, toolchain (Node + Rust), Tauri scaffold.
-- [ ] **M1 — Local prototype**: show local CPU/Mem/Net/Disk live in the main window.
-- [ ] **M2 — Widget window**: frameless transparent always-on-top mini panel + toggle.
+- [x] **M1 — Local prototype**: live local CPU (overall + per-core) / Mem / Swap /
+      Net rates / Disks in the main window, via a Rust sampler emitting `metrics` events.
+- [x] **M2 — Widget window**: frameless transparent always-on-top mini panel + toggle
+      button, with a stale/disconnect alert badge. (Polish/positioning still TODO.)
 - [ ] **M3 — SSH (Linux)**: add a server, connect, live metrics from one Linux host.
 - [ ] **M4 — Alerts**: heartbeat, disconnect/crash detection, auto-reconnect, banners.
 - [ ] **M5 — Multi-OS remote**: macOS + Windows command tables + OS auto-detect.
