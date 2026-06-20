@@ -1,7 +1,25 @@
-# Tauri + Vanilla TS
+# WatchPost
 
-This template should help get you started developing with Tauri in vanilla HTML, CSS and Typescript.
+Lightweight cross-platform desktop monitor for your PC and remote servers — `btop`-style stats plus a desktop widget.
 
-## Recommended IDE Setup
+Built with [Tauri](https://tauri.app/) (Rust + system webview).
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## Development
+
+```bash
+export PATH="/opt/homebrew/bin:$PATH"
+npm install
+npm run tauri dev
+```
+
+## Tests
+
+```bash
+npm test
+```
+
+## Build
+
+```bash
+npm run tauri build
+```

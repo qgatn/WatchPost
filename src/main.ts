@@ -92,7 +92,7 @@ function renderMain(root: HTMLElement) {
     <div class="main">
       <div class="topbar">
         <div class="brand">
-          <h1>NodeWatch</h1>
+          <h1>WatchPost</h1>
           <span class="host" id="host">connecting…</span>
         </div>
         <div style="display:flex;align-items:center;gap:14px;">
@@ -244,7 +244,7 @@ function renderWidget(root: HTMLElement) {
   root.innerHTML = `
     <div class="widget" data-tauri-drag-region>
       <div class="whead">
-        <span class="name" id="w-host" data-tauri-drag-region>NodeWatch</span>
+        <span class="name" id="w-host" data-tauri-drag-region>WatchPost</span>
         <span class="status-pill"><span class="dot" id="w-dot" data-tauri-drag-region></span></span>
       </div>
       <div class="metric" data-tauri-drag-region>
