@@ -28,14 +28,155 @@ body {
   background: var(--bg);
 }
 
-/* Widget mode: transparent canvas floating on the desktop */
-body.widget {
+/* Widget mode: transparent window hugs content */
+body.widget-mode {
   background: transparent;
   overflow: hidden;
   user-select: none;
+  margin: 0;
+  width: fit-content;
+  height: fit-content;
 }
 
-#app { height: 100%; }
+#app.widget-root {
+  width: fit-content;
+  height: fit-content;
+}
+
+/* ---------- Widget — horizontal metric strip (option B) ---------- */
+.widget-wrap {
+  width: fit-content;
+  max-width: 620px;
+  background: rgba(15, 20, 25, 0.88);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.widget-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  font-size: 11px;
+  cursor: grab;
+  box-sizing: border-box;
+}
+
+.widget-strip:active {
+  cursor: grabbing;
+}
+
+.widget-strip.stale {
+  box-shadow: inset 0 -2px 0 var(--err);
+}
+
+.widget-strip .seg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.widget-strip .seg-host {
+  gap: 6px;
+  max-width: 120px;
+}
+
+.widget-strip .seg-host .name {
+  font-weight: 600;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.widget-strip .seg-users {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+  border-left: 1px solid #ffffff18;
+  border-right: 1px solid #ffffff18;
+}
+
+.widget-strip .seg-metric {
+  gap: 4px;
+}
+
+.widget-strip .seg-metric .lbl {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.widget-strip .seg-metric .val,
+.widget-strip .seg-storage .val {
+  font-variant-numeric: tabular-nums;
+}
+
+.widget-strip .seg-metric .val {
+  min-width: 28px;
+}
+
+.widget-strip .seg-storage .val {
+  white-space: nowrap;
+}
+
+.widget-strip .usage-ok .val {
+  color: var(--ok);
+}
+
+.widget-strip .usage-warn .val {
+  color: var(--warn);
+}
+
+.widget-strip .usage-err .val {
+  color: var(--err);
+}
+
+.widget-strip .bar-inline {
+  width: 48px;
+  height: 5px;
+  background: var(--panel-2);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 0;
+}
+
+.widget-strip .bar-inline > span {
+  display: block;
+  height: 100%;
+  width: 0%;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.widget-strip .usage-ok .bar-inline > span {
+  background: var(--ok);
+}
+
+.widget-strip .usage-warn .bar-inline > span {
+  background: var(--warn);
+}
+
+.widget-strip .usage-err .bar-inline > span {
+  background: var(--err);
+}
+
+.widget-strip .seg-net {
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+  padding-left: 4px;
+  border-left: 1px solid #ffffff18;
+}
+
+.widget-strip .seg-net .rx { color: var(--net-rx); }
+.widget-strip .seg-net .tx { color: var(--net-tx); }
 
 /* ---------- Main window ---------- */
 .main {
@@ -225,44 +366,4 @@ canvas.spark { width: 100%; height: 44px; display: block; margin-top: 8px; }
 .net-line .rx { color: var(--net-rx); }
 .net-line .tx { color: var(--net-tx); }
 
-/* ---------- Widget window ---------- */
-.widget {
-  height: 100%;
-  background: rgba(15, 20, 25, 0.86);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-  border: none;
-  border-radius: 14px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  cursor: grab;
-}
-
-.widget:active {
-  cursor: grabbing;
-}
-.widget .whead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.widget .whead .name { font-size: 12px; font-weight: 600; }
-.widget .metric .row1 {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: var(--muted);
-}
-.widget .metric .val { color: var(--text); font-variant-numeric: tabular-nums; }
-.widget .alert {
-  font-size: 11px;
-  color: var(--err);
-  background: #f5656522;
-  border: 1px solid #f5656555;
-  border-radius: 8px;
-  padding: 6px 8px;
-  display: none;
-}
-.widget .alert.show { display: block; }
+#app { height: 100%; }
