@@ -16,10 +16,10 @@
       {
         "label": "main",
         "title": "WatchPost",
-        "width": 880,
-        "height": 620,
-        "minWidth": 520,
-        "minHeight": 360,
+        "width": 720,
+        "height": 480,
+        "minWidth": 480,
+        "minHeight": 320,
         "resizable": true
       },
       {
