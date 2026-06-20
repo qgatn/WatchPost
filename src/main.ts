@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { fmtBytes, fmtRate, fmtUptime } from "./format";
+import { diskUsedPct, fmtBytes, fmtRate, fmtUptime, fmtUsers, fmtDiskUsage, usageLevel } from "./format";
 import { History } from "./history";
 import { isStale } from "./status";
 
@@ -28,6 +29,7 @@ interface Snapshot {
   net_tx_bps: number;
   disks: DiskInfo[];
   uptime_secs: number;
+  active_users: number;
   ts_ms: number;
 }
 
@@ -83,6 +85,10 @@ function netBarPct(bps: number, maxBps: number): number {
   return Math.min(100, (bps / maxBps) * 100);
 }
 
+function primaryDisk(disks: DiskInfo[]): DiskInfo | undefined {
+  return disks.find((d) => d.mount === "/") ?? disks[0];
+}
+
 // =====================================================================
 //  MAIN WINDOW
 // =====================================================================
@@ -108,6 +114,7 @@ function renderMain(root: HTMLElement) {
             <li><span>OS</span><span id="spec-os">–</span></li>
             <li><span>CPU</span><span id="spec-cpu">–</span></li>
             <li><span>Memory</span><span id="spec-mem">–</span></li>
+            <li><span>Active users</span><span id="spec-users">–</span></li>
             <li><span>Uptime</span><span id="spec-uptime">–</span></li>
           </ul>
         </div>
@@ -166,6 +173,7 @@ function renderMain(root: HTMLElement) {
       s.physical_cores ?? 0,
     );
     $("spec-mem").textContent = fmtBytes(s.mem_total);
+    $("spec-users").textContent = fmtUsers(s.active_users ?? 0);
     $("spec-uptime").textContent = fmtUptime(s.uptime_secs);
 
     // CPU
@@ -237,44 +245,89 @@ function renderMain(root: HTMLElement) {
 }
 
 // =====================================================================
+function setSegmentUsage(seg: HTMLElement, pct: number) {
+  seg.classList.remove("usage-ok", "usage-warn", "usage-err");
+  seg.classList.add(`usage-${usageLevel(pct)}`);
+}
+
 //  WIDGET WINDOW
 // =====================================================================
 function renderWidget(root: HTMLElement) {
-  document.body.classList.add("widget");
+  document.body.classList.add("widget-mode");
+  root.classList.add("widget-root");
   root.innerHTML = `
-    <div class="widget" data-tauri-drag-region>
-      <div class="whead">
-        <span class="name" id="w-host" data-tauri-drag-region>WatchPost</span>
-        <span class="status-pill"><span class="dot" id="w-dot" data-tauri-drag-region></span></span>
+    <div class="widget-wrap" id="widget-wrap">
+      <div class="widget-strip" id="widget-strip" data-tauri-drag-region>
+        <div class="seg seg-host" data-tauri-drag-region>
+          <span class="dot" id="w-dot"></span>
+          <span class="name" id="w-host" data-tauri-drag-region>…</span>
+        </div>
+        <div class="seg seg-users" data-tauri-drag-region>
+          <span id="w-users">–</span>
+        </div>
+        <div class="seg seg-metric" data-tauri-drag-region>
+          <span class="lbl">CPU</span>
+          <span class="val" id="w-cpu">0%</span>
+          <div class="bar bar-inline"><span id="w-cpu-bar"></span></div>
+        </div>
+        <div class="seg seg-metric" data-tauri-drag-region>
+          <span class="lbl">MEM</span>
+          <span class="val" id="w-mem">0%</span>
+          <div class="bar bar-inline"><span id="w-mem-bar"></span></div>
+        </div>
+        <div class="seg seg-storage" data-tauri-drag-region>
+          <span class="lbl">DISK</span>
+          <span class="val" id="w-disk">–</span>
+        </div>
+        <div class="seg seg-net" data-tauri-drag-region>
+          <span class="rx" id="w-rx">↓ –</span>
+          <span class="tx" id="w-tx">↑ –</span>
+        </div>
       </div>
-      <div class="metric" data-tauri-drag-region>
-        <div class="row1"><span>CPU</span><span class="val" id="w-cpu">0%</span></div>
-        <div class="bar"><span id="w-cpu-bar" style="background:var(--cpu)"></span></div>
-      </div>
-      <div class="metric" data-tauri-drag-region>
-        <div class="row1"><span>Memory</span><span class="val" id="w-mem">0%</span></div>
-        <div class="bar"><span id="w-mem-bar" style="background:var(--mem)"></span></div>
-      </div>
-      <div class="metric" data-tauri-drag-region>
-        <div class="row1"><span>Net ↓</span><span class="val rx" id="w-rx">–</span></div>
-        <div class="row1"><span>Net ↑</span><span class="val tx" id="w-tx">–</span></div>
-      </div>
-      <div class="alert" id="w-alert">⚠ Disconnected — no data</div>
     </div>`;
 
   const $ = (id: string) => document.getElementById(id)!;
+  const wrap = $("widget-wrap");
+  const strip = $("widget-strip");
+  const win = getCurrentWindow();
+
+  function fitWindow() {
+    requestAnimationFrame(() => {
+      const w = Math.ceil(wrap.offsetWidth);
+      const h = Math.ceil(wrap.offsetHeight);
+      if (w > 0 && h > 0) {
+        win.setSize(new LogicalSize(w, h)).catch(() => {});
+      }
+    });
+  }
 
   function update(s: Snapshot) {
     lastUpdate = Date.now();
     $("w-host").textContent = s.hostname;
+    $("w-users").textContent = fmtUsers(s.active_users ?? 0);
     const cpu = Math.round(s.cpu_usage);
     $("w-cpu").textContent = `${cpu}%`;
     ($("w-cpu-bar") as HTMLElement).style.width = `${cpu}%`;
+    setSegmentUsage($("w-cpu").closest(".seg")!, s.cpu_usage);
     const memPct = s.mem_total ? (s.mem_used / s.mem_total) * 100 : 0;
     $("w-mem").textContent = `${Math.round(memPct)}%`;
     ($("w-mem-bar") as HTMLElement).style.width = `${memPct}%`;
-    $("w-rx").textContent = fmtRate(s.net_rx_bps);
-    $("w-tx").textContent = fmtRate(s.net_tx_bps);
+    setSegmentUsage($("w-mem").closest(".seg")!, memPct);
+    $("w-rx").textContent = `↓ ${fmtRate(s.net_rx_bps)}`;
+    $("w-tx").textContent = `↑ ${fmtRate(s.net_tx_bps)}`;
+    const disk = primaryDisk(s.disks);
+    const diskEl = $("w-disk");
+    const diskSeg = diskEl.closest(".seg")!;
+    if (disk && disk.total > 0) {
+      const used = disk.total - disk.available;
+      const diskPct = diskUsedPct(disk.total, disk.available);
+      diskEl.textContent = fmtDiskUsage(used, disk.total);
+      setSegmentUsage(diskSeg, diskPct);
+    } else {
+      diskEl.textContent = "–";
+      diskSeg.classList.remove("usage-ok", "usage-warn", "usage-err");
+    }
+    fitWindow();
   }
 
   listen<Snapshot>("metrics", (e) => update(e.payload));
@@ -282,8 +335,11 @@ function renderWidget(root: HTMLElement) {
   setInterval(() => {
     const stale = isStale(lastUpdate, Date.now());
     $("w-dot").className = "dot" + (stale ? " err" : "");
-    $("w-alert").className = "alert" + (stale ? " show" : "");
+    strip.classList.toggle("stale", stale);
+    fitWindow();
   }, 1000);
+
+  fitWindow();
 }
 
 // ---------- bootstrap ----------

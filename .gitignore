@@ -23,9 +23,5 @@ src-tauri/gen/
 .idea/
 *.log
 
-# Local-only (not published to GitHub)
-notes/
-GOAL.md
-PLAN.md
-commands
-Name
+# Local scratchpad (goals, plans, layout, notes — not published)
+scratchpad/

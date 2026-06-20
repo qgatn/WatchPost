@@ -23,9 +23,33 @@ export function fmtUptime(s: number): string {
   return `${m}m`;
 }
 
+export function fmtUsers(n: number): string {
+  return `${n} user${n === 1 ? "" : "s"}`;
+}
+
+export function fmtDiskUsage(used: number, total: number): string {
+  return `${fmtBytes(used)} / ${fmtBytes(total)}`;
+}
+
 /** Disk used percentage from total/available byte counts. */
 export function diskUsedPct(total: number, available: number): number {
   if (total <= 0) return 0;
   const used = total - available;
   return (used / total) * 100;
+}
+
+export type UsageLevel = "ok" | "warn" | "err";
+
+/** Green ≤50%, orange >50%, red >90%. */
+export function usageLevel(pct: number): UsageLevel {
+  if (pct > 90) return "err";
+  if (pct > 50) return "warn";
+  return "ok";
+}
+
+export function usageLabel(pct: number): string {
+  const level = usageLevel(pct);
+  if (level === "ok") return "healthy (≤50%)";
+  if (level === "warn") return "elevated (>50%)";
+  return "critical (>90%)";
 }

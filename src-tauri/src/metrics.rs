@@ -4,8 +4,48 @@
 //! values (CPU %, network rates), and hand a compact `Snapshot` to the UI.
 
 use serde::Serialize;
+use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, Networks, System};
+
+/// Count logged-in sessions (console + SSH/tty). Used locally now; SSH remotes later.
+pub fn count_active_users() -> usize {
+    #[cfg(target_family = "unix")]
+    {
+        return Command::new("who")
+            .output()
+            .ok()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .count()
+            })
+            .unwrap_or(0);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return Command::new("query")
+            .arg("user")
+            .output()
+            .ok()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .skip(1) // header
+                    .filter(|l| {
+                        let t = l.trim();
+                        !t.is_empty() && !t.starts_with("No User exists")
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+    }
+    #[cfg(not(any(target_family = "unix", target_os = "windows")))]
+    {
+        0
+    }
+}
 
 /// Convert byte deltas since the last refresh into bytes-per-second rates.
 pub fn compute_net_bps(rx: u64, tx: u64, elapsed_secs: f64) -> (u64, u64) {
@@ -54,6 +94,7 @@ pub struct Snapshot {
     pub net_tx_bps: u64, // bytes/sec transmitted
     pub disks: Vec<DiskInfo>,
     pub uptime_secs: u64,
+    pub active_users: usize,
     pub ts_ms: u128,
 }
 
@@ -145,6 +186,7 @@ impl LocalSampler {
             net_tx_bps,
             disks,
             uptime_secs: System::uptime(),
+            active_users: count_active_users(),
             ts_ms,
         }
     }
@@ -197,6 +239,7 @@ mod tests {
                 available: 250_000,
             }],
             uptime_secs: 3600,
+            active_users: 2,
             ts_ms: 1_700_000_000_000,
         };
 
@@ -206,6 +249,7 @@ mod tests {
         assert_eq!(json["cpu_usage"], 12.5);
         assert_eq!(json["per_core"], serde_json::json!([10.0, 15.0]));
         assert_eq!(json["net_rx_bps"], 1024);
+        assert_eq!(json["active_users"], 2);
         assert_eq!(json["disks"][0]["mount"], "/");
     }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diskUsedPct, fmtBytes, fmtRate, fmtUptime } from "./format";
+import { diskUsedPct, fmtBytes, fmtRate, fmtUptime, fmtUsers, fmtDiskUsage, usageLevel, usageLabel } from "./format";
 
 describe("fmtBytes", () => {
   it("formats bytes and scales up", () => {
@@ -28,6 +28,37 @@ describe("fmtUptime", () => {
 
   it("formats days, hours, and minutes", () => {
     expect(fmtUptime(90061)).toBe("1d 1h 1m");
+  });
+});
+
+describe("fmtUsers", () => {
+  it("singular and plural", () => {
+    expect(fmtUsers(1)).toBe("1 user");
+    expect(fmtUsers(3)).toBe("3 users");
+  });
+});
+
+describe("fmtDiskUsage", () => {
+  it("formats used and total", () => {
+    expect(fmtDiskUsage(1024 * 1024 * 120, 1024 * 1024 * 500)).toBe("120 MB / 500 MB");
+  });
+});
+
+describe("usageLevel", () => {
+  it("maps thresholds to ok, warn, err", () => {
+    expect(usageLevel(0)).toBe("ok");
+    expect(usageLevel(50)).toBe("ok");
+    expect(usageLevel(51)).toBe("warn");
+    expect(usageLevel(90)).toBe("warn");
+    expect(usageLevel(91)).toBe("err");
+  });
+});
+
+describe("usageLabel", () => {
+  it("describes threshold bands", () => {
+    expect(usageLabel(30)).toContain("healthy");
+    expect(usageLabel(60)).toContain("elevated");
+    expect(usageLabel(95)).toContain("critical");
   });
 });
 
