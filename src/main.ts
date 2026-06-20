@@ -89,7 +89,51 @@ function primaryDisk(disks: DiskInfo[]): DiskInfo | undefined {
   return disks.find((d) => d.mount === "/") ?? disks[0];
 }
 
-// =====================================================================
+function secondaryDisk(disks: DiskInfo[]): DiskInfo | undefined {
+  const primary = primaryDisk(disks);
+  return disks.find((d) => d !== primary);
+}
+
+function diskBarColor(pct: number): string {
+  const level = usageLevel(pct);
+  if (level === "err") return "var(--err)";
+  if (level === "warn") return "var(--warn)";
+  return "var(--accent)";
+}
+
+function setBar(elId: string, pct: number, color: string) {
+  const bar = document.getElementById(elId) as HTMLElement | null;
+  if (!bar) return;
+  bar.style.width = `${Math.min(100, pct)}%`;
+  bar.style.background = color;
+}
+
+function updateDiskRow(
+  $: (id: string) => HTMLElement,
+  prefix: string,
+  disk: DiskInfo | undefined,
+  fallbackLabel: string,
+) {
+  const label = $(`${prefix}-label`);
+  const pctEl = $(`${prefix}-pct`);
+  const sub = $(`${prefix}-sub`);
+  const bar = $(`${prefix}-bar`);
+  if (!disk || disk.total <= 0) {
+    label.textContent = fallbackLabel;
+    pctEl.textContent = "–";
+    sub.textContent = "–";
+    bar.style.width = "0%";
+    return;
+  }
+  const used = disk.total - disk.available;
+  const pct = diskUsedPct(disk.total, disk.available);
+  label.textContent = disk.mount;
+  pctEl.textContent = `${Math.round(pct)}%`;
+  sub.textContent = `${fmtBytes(used)} / ${fmtBytes(disk.total)}`;
+  bar.style.width = `${pct}%`;
+  bar.style.background = diskBarColor(pct);
+}
+
 //  MAIN WINDOW
 // =====================================================================
 function renderMain(root: HTMLElement) {
@@ -118,36 +162,70 @@ function renderMain(root: HTMLElement) {
             <li><span>Uptime</span><span id="spec-uptime">–</span></li>
           </ul>
         </div>
-        <div class="card">
+        <div class="card card-cpu">
           <h2>CPU <span id="cpu-pct">0%</span></h2>
           <div class="big" id="cpu-big">0%</div>
           <canvas class="spark" id="cpu-spark"></canvas>
-          <div class="cores" id="cores"></div>
-        </div>
-        <div class="card">
-          <h2>Memory <span id="mem-pct">0%</span></h2>
-          <div class="big" id="mem-used">–</div>
-          <div class="sub" id="mem-sub"></div>
-          <div class="bar"><span id="mem-bar" style="background:var(--mem)"></span></div>
-          <div class="sub" id="swap-sub" style="margin-top:10px"></div>
-          <div class="bar"><span id="swap-bar" style="background:var(--warn)"></span></div>
-        </div>
-        <div class="card card-storage-net">
-          <h2>Storage & Network</h2>
-          <div class="section-label">Network</div>
-          <div class="net-bar-row">
-            <span class="rx">↓ RX</span>
-            <div class="bar bar-sm"><span id="net-rx-bar" style="background:var(--net-rx)"></span></div>
-            <span class="val rx" id="net-rx">–</span>
+          <div class="cores-meta"><span id="cores-count">–</span></div>
+          <div class="cores-scroll">
+            <div class="cores" id="cores"></div>
           </div>
-          <div class="net-bar-row">
-            <span class="tx">↑ TX</span>
-            <div class="bar bar-sm"><span id="net-tx-bar" style="background:var(--net-tx)"></span></div>
-            <span class="val tx" id="net-tx">–</span>
+        </div>
+        <div class="card card-mem-storage">
+          <h2>Memory & Storage</h2>
+          <div class="card-section">
+            <div class="bar-row">
+              <div class="bar-label"><span>Memory</span><span id="mem-pct">0%</span></div>
+              <div class="bar bar-sm"><span id="mem-bar" style="background:var(--mem)"></span></div>
+              <div class="bar-sub" id="mem-sub">–</div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-label"><span>Swap</span><span id="swap-pct">–</span></div>
+              <div class="bar bar-sm"><span id="swap-bar" style="background:var(--warn)"></span></div>
+              <div class="bar-sub" id="swap-sub">–</div>
+            </div>
           </div>
-          <canvas class="spark" id="net-spark"></canvas>
-          <div class="section-label section-gap">Storage</div>
-          <div id="disks"></div>
+          <div class="card-divider"></div>
+          <div class="card-section">
+            <div class="bar-row">
+              <div class="bar-label"><span id="disk1-label">Disk</span><span id="disk1-pct">–</span></div>
+              <div class="bar bar-sm"><span id="disk1-bar"></span></div>
+              <div class="bar-sub" id="disk1-sub">–</div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-label"><span id="disk2-label">Disk 2</span><span id="disk2-pct">–</span></div>
+              <div class="bar bar-sm"><span id="disk2-bar"></span></div>
+              <div class="bar-sub" id="disk2-sub">–</div>
+            </div>
+          </div>
+        </div>
+        <div class="card card-net-sessions">
+          <h2>Network & Sessions</h2>
+          <div class="card-section">
+            <div class="net-bar-row">
+              <span class="rx">↓ RX</span>
+              <div class="bar bar-sm"><span id="net-rx-bar" style="background:var(--net-rx)"></span></div>
+              <span class="val rx" id="net-rx">–</span>
+            </div>
+            <div class="net-bar-row">
+              <span class="tx">↑ TX</span>
+              <div class="bar bar-sm"><span id="net-tx-bar" style="background:var(--net-tx)"></span></div>
+              <span class="val tx" id="net-tx">–</span>
+            </div>
+            <canvas class="spark" id="net-spark"></canvas>
+            <div class="bar-sub" id="net-peak">Peak: –</div>
+          </div>
+          <div class="card-divider"></div>
+          <div class="card-section">
+            <div class="session-stat">
+              <span class="session-lbl">Active users</span>
+              <span class="session-val" id="sess-users">–</span>
+            </div>
+            <div class="session-stat">
+              <span class="session-lbl">Uptime</span>
+              <span class="session-val" id="sess-uptime">–</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>`;
@@ -178,60 +256,54 @@ function renderMain(root: HTMLElement) {
 
     // CPU
     const cpu = Math.round(s.cpu_usage);
+    const coreCount = s.per_core.length;
     $("cpu-pct").textContent = `${cpu}%`;
     $("cpu-big").textContent = `${cpu}%`;
+    $("cores-count").textContent = `${coreCount} core${coreCount === 1 ? "" : "s"}`;
     cpuHist.push(s.cpu_usage);
     drawSpark($("cpu-spark") as HTMLCanvasElement, cpuHist, "#4fd1c5", 100);
 
-    // per-core bars
     const cores = $("cores");
-    if (coresBuilt !== s.per_core.length) {
+    if (coresBuilt !== coreCount) {
       cores.innerHTML = s.per_core
-        .map((_, i) => `<div class="core"><span id="core-${i}"></span></div>`)
+        .map((_, i) => `<div class="core" title="Core ${i + 1}"><span id="core-${i}"></span></div>`)
         .join("");
-      coresBuilt = s.per_core.length;
+      coresBuilt = coreCount;
     }
     s.per_core.forEach((v, i) => {
       const el = document.getElementById(`core-${i}`);
       if (el) el.style.height = `${Math.min(100, v)}%`;
     });
 
-    // Memory
+    // Memory & Storage (4 bars)
     const memPct = s.mem_total ? (s.mem_used / s.mem_total) * 100 : 0;
     $("mem-pct").textContent = `${Math.round(memPct)}%`;
-    $("mem-used").textContent = fmtBytes(s.mem_used);
-    $("mem-sub").textContent = `of ${fmtBytes(s.mem_total)}`;
-    ($("mem-bar") as HTMLElement).style.width = `${memPct}%`;
+    $("mem-sub").textContent = `${fmtBytes(s.mem_used)} / ${fmtBytes(s.mem_total)}`;
+    setBar("mem-bar", memPct, "var(--mem)");
     if (s.swap_total > 0) {
       const swapPct = (s.swap_used / s.swap_total) * 100;
-      $("swap-sub").textContent = `Swap: ${fmtBytes(s.swap_used)} / ${fmtBytes(s.swap_total)}`;
-      ($("swap-bar") as HTMLElement).style.width = `${swapPct}%`;
+      $("swap-pct").textContent = `${Math.round(swapPct)}%`;
+      $("swap-sub").textContent = `${fmtBytes(s.swap_used)} / ${fmtBytes(s.swap_total)}`;
+      setBar("swap-bar", swapPct, "var(--warn)");
     } else {
-      $("swap-sub").textContent = "Swap: none";
+      $("swap-pct").textContent = "–";
+      $("swap-sub").textContent = "none";
+      setBar("swap-bar", 0, "var(--warn)");
     }
+    updateDiskRow($, "disk1", primaryDisk(s.disks), "Disk");
+    updateDiskRow($, "disk2", secondaryDisk(s.disks), "Disk 2");
 
-    // Network + activity bars (scaled to recent peak)
+    // Network & Sessions
     $("net-rx").textContent = fmtRate(s.net_rx_bps);
     $("net-tx").textContent = fmtRate(s.net_tx_bps);
     netHist.push(s.net_rx_bps + s.net_tx_bps);
     const netPeak = Math.max(netHist.max(), s.net_rx_bps, s.net_tx_bps, 1);
-    ($("net-rx-bar") as HTMLElement).style.width =
-      `${netBarPct(s.net_rx_bps, netPeak)}%`;
-    ($("net-tx-bar") as HTMLElement).style.width =
-      `${netBarPct(s.net_tx_bps, netPeak)}%`;
+    ($("net-rx-bar") as HTMLElement).style.width = `${netBarPct(s.net_rx_bps, netPeak)}%`;
+    ($("net-tx-bar") as HTMLElement).style.width = `${netBarPct(s.net_tx_bps, netPeak)}%`;
+    $("net-peak").textContent = `Peak: ${fmtRate(netPeak)}`;
     drawSpark($("net-spark") as HTMLCanvasElement, netHist, "#63b3ed");
-
-    // Disks
-    $("disks").innerHTML = s.disks
-      .map((d) => {
-        const used = d.total - d.available;
-        const pct = d.total ? (used / d.total) * 100 : 0;
-        return `<div class="disk-row">
-            <div class="label"><span>${d.mount}</span><span>${fmtBytes(used)} / ${fmtBytes(d.total)}</span></div>
-            <div class="bar"><span style="width:${pct}%;background:${pct > 90 ? "var(--err)" : "var(--accent)"}"></span></div>
-          </div>`;
-      })
-      .join("");
+    $("sess-users").textContent = fmtUsers(s.active_users ?? 0);
+    $("sess-uptime").textContent = fmtUptime(s.uptime_secs);
   }
 
   listen<Snapshot>("metrics", (e) => update(e.payload));
@@ -293,11 +365,13 @@ function renderWidget(root: HTMLElement) {
 
   function fitWindow() {
     requestAnimationFrame(() => {
-      const w = Math.ceil(wrap.offsetWidth);
-      const h = Math.ceil(wrap.offsetHeight);
-      if (w > 0 && h > 0) {
-        win.setSize(new LogicalSize(w, h)).catch(() => {});
-      }
+      requestAnimationFrame(() => {
+        const w = Math.ceil(strip.scrollWidth + 8);
+        const h = Math.ceil(strip.offsetHeight + 4);
+        if (w > 0 && h > 0) {
+          win.setSize(new LogicalSize(w, h)).catch(() => {});
+        }
+      });
     });
   }
 
