@@ -7,6 +7,26 @@ use serde::Serialize;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, Networks, System};
 
+/// Convert byte deltas since the last refresh into bytes-per-second rates.
+pub fn compute_net_bps(rx: u64, tx: u64, elapsed_secs: f64) -> (u64, u64) {
+    let elapsed = elapsed_secs.max(0.001);
+    (
+        (rx as f64 / elapsed) as u64,
+        (tx as f64 / elapsed) as u64,
+    )
+}
+
+/// Disk used percentage from total and available byte counts.
+/// Shared helper for tests now; remote SSH parsers will reuse it in M3+.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn disk_used_pct(total: u64, available: u64) -> f32 {
+    if total == 0 {
+        return 0.0;
+    }
+    let used = total.saturating_sub(available);
+    (used as f64 / total as f64 * 100.0) as f32
+}
+
 #[derive(Serialize, Clone)]
 pub struct DiskInfo {
     pub name: String,
@@ -24,6 +44,8 @@ pub struct Snapshot {
     pub os: String,
     pub cpu_usage: f32,      // overall %, 0..100
     pub per_core: Vec<f32>,  // per-core %
+    pub cpu_cores: usize,    // logical core count
+    pub physical_cores: usize,
     pub mem_used: u64,
     pub mem_total: u64,
     pub swap_used: u64,
@@ -81,8 +103,7 @@ impl LocalSampler {
             rx += data.received();
             tx += data.transmitted();
         }
-        let net_rx_bps = (rx as f64 / elapsed) as u64;
-        let net_tx_bps = (tx as f64 / elapsed) as u64;
+        let (net_rx_bps, net_tx_bps) = compute_net_bps(rx, tx, elapsed);
 
         let per_core: Vec<f32> = self.sys.cpus().iter().map(|c| c.cpu_usage()).collect();
 
@@ -114,6 +135,8 @@ impl LocalSampler {
             .to_string(),
             cpu_usage: self.sys.global_cpu_usage(),
             per_core,
+            cpu_cores: self.sys.cpus().len(),
+            physical_cores: self.sys.physical_core_count().unwrap_or(0),
             mem_used: self.sys.used_memory(),
             mem_total: self.sys.total_memory(),
             swap_used: self.sys.used_swap(),
@@ -124,5 +147,75 @@ impl LocalSampler {
             uptime_secs: System::uptime(),
             ts_ms,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_net_bps_converts_deltas_to_rates() {
+        let (rx, tx) = compute_net_bps(2048, 1024, 2.0);
+        assert_eq!(rx, 1024);
+        assert_eq!(tx, 512);
+    }
+
+    #[test]
+    fn compute_net_bps_avoids_divide_by_zero() {
+        let (rx, tx) = compute_net_bps(100, 50, 0.0);
+        assert_eq!(rx, 100_000);
+        assert_eq!(tx, 50_000);
+    }
+
+    #[test]
+    fn disk_used_pct_handles_empty_and_partial() {
+        assert_eq!(disk_used_pct(0, 0), 0.0);
+        assert!((disk_used_pct(1000, 250) - 75.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn snapshot_serializes_expected_fields() {
+        let snap = Snapshot {
+            source: "local".into(),
+            hostname: "test-host".into(),
+            os: "TestOS 1.0".into(),
+            cpu_usage: 12.5,
+            per_core: vec![10.0, 15.0],
+            cpu_cores: 2,
+            physical_cores: 2,
+            mem_used: 4_000_000_000,
+            mem_total: 16_000_000_000,
+            swap_used: 0,
+            swap_total: 0,
+            net_rx_bps: 1024,
+            net_tx_bps: 512,
+            disks: vec![DiskInfo {
+                name: "disk0".into(),
+                mount: "/".into(),
+                total: 1_000_000,
+                available: 250_000,
+            }],
+            uptime_secs: 3600,
+            ts_ms: 1_700_000_000_000,
+        };
+
+        let json = serde_json::to_value(&snap).expect("serialize snapshot");
+        assert_eq!(json["source"], "local");
+        assert_eq!(json["hostname"], "test-host");
+        assert_eq!(json["cpu_usage"], 12.5);
+        assert_eq!(json["per_core"], serde_json::json!([10.0, 15.0]));
+        assert_eq!(json["net_rx_bps"], 1024);
+        assert_eq!(json["disks"][0]["mount"], "/");
+    }
+
+    #[test]
+    fn local_sampler_produces_local_source() {
+        let mut sampler = LocalSampler::new();
+        std::thread::sleep(Duration::from_millis(50));
+        let snap = sampler.sample();
+        assert_eq!(snap.source, "local");
+        assert!(!snap.hostname.is_empty());
+        assert!(snap.mem_total > 0);
     }
 }

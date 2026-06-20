@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
-/// Toggle the always-on-top desktop widget window.
+/// Toggle the desktop widget window (stays below other windows).
 #[tauri::command]
 fn toggle_widget(app: AppHandle) -> Result<bool, String> {
     let win = app
@@ -15,8 +15,9 @@ fn toggle_widget(app: AppHandle) -> Result<bool, String> {
         win.hide().map_err(|e| e.to_string())?;
         Ok(false)
     } else {
+        win.set_always_on_top(false).map_err(|e| e.to_string())?;
+        win.set_always_on_bottom(true).map_err(|e| e.to_string())?;
         win.show().map_err(|e| e.to_string())?;
-        win.set_focus().ok();
         Ok(true)
     }
 }

@@ -23,5 +23,9 @@ src-tauri/gen/
 .idea/
 *.log
 
-# Misc
+# Local-only (not published to GitHub)
+notes/
+GOAL.md
+PLAN.md
+commands
 Name

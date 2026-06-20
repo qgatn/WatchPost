@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { fmtBytes, fmtRate, fmtUptime } from "./format";
+import { History } from "./history";
+import { isStale } from "./status";
 
 interface DiskInfo {
   name: string;
@@ -15,6 +18,8 @@ interface Snapshot {
   os: string;
   cpu_usage: number;
   per_core: number[];
+  cpu_cores: number;
+  physical_cores: number;
   mem_used: number;
   mem_total: number;
   swap_used: number;
@@ -24,45 +29,6 @@ interface Snapshot {
   disks: DiskInfo[];
   uptime_secs: number;
   ts_ms: number;
-}
-
-// ---------- formatting helpers ----------
-function fmtBytes(n: number): string {
-  const u = ["B", "KB", "MB", "GB", "TB"];
-  let i = 0;
-  let v = n;
-  while (v >= 1024 && i < u.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
-}
-function fmtRate(bps: number): string {
-  return `${fmtBytes(bps)}/s`;
-}
-function fmtUptime(s: number): string {
-  const d = Math.floor(s / 86400);
-  const h = Math.floor((s % 86400) / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  if (d > 0) return `${d}d ${h}h ${m}m`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
-
-// Small fixed-length history buffer for sparklines.
-class History {
-  private buf: number[] = [];
-  constructor(private cap: number) {}
-  push(v: number) {
-    this.buf.push(v);
-    if (this.buf.length > this.cap) this.buf.shift();
-  }
-  values() {
-    return this.buf;
-  }
-  max() {
-    return Math.max(1, ...this.buf);
-  }
 }
 
 function drawSpark(
@@ -104,7 +70,18 @@ function drawSpark(
 
 // ---------- staleness / alert tracking ----------
 let lastUpdate = 0;
-const STALE_MS = 4000;
+
+function formatCpuSpec(cores: number, physical: number): string {
+  if (physical > 0 && physical !== cores) {
+    return `${cores} cores (${physical} physical)`;
+  }
+  return `${cores} core${cores === 1 ? "" : "s"}`;
+}
+
+function netBarPct(bps: number, maxBps: number): number {
+  if (maxBps <= 0) return 0;
+  return Math.min(100, (bps / maxBps) * 100);
+}
 
 // =====================================================================
 //  MAIN WINDOW
@@ -123,7 +100,17 @@ function renderMain(root: HTMLElement) {
           <button id="widget-btn">Open Widget</button>
         </div>
       </div>
-      <div class="grid">
+      <div class="grid grid-4">
+        <div class="card card-system">
+          <h2>System</h2>
+          <div class="spec-host" id="spec-host">connecting…</div>
+          <ul class="spec-list">
+            <li><span>OS</span><span id="spec-os">–</span></li>
+            <li><span>CPU</span><span id="spec-cpu">–</span></li>
+            <li><span>Memory</span><span id="spec-mem">–</span></li>
+            <li><span>Uptime</span><span id="spec-uptime">–</span></li>
+          </ul>
+        </div>
         <div class="card">
           <h2>CPU <span id="cpu-pct">0%</span></h2>
           <div class="big" id="cpu-big">0%</div>
@@ -138,20 +125,22 @@ function renderMain(root: HTMLElement) {
           <div class="sub" id="swap-sub" style="margin-top:10px"></div>
           <div class="bar"><span id="swap-bar" style="background:var(--warn)"></span></div>
         </div>
-        <div class="card">
-          <h2>Network</h2>
-          <div class="net-line"><span class="rx">↓ RX</span><span class="rx val" id="net-rx">–</span></div>
-          <div class="net-line"><span class="tx">↑ TX</span><span class="tx val" id="net-tx">–</span></div>
+        <div class="card card-storage-net">
+          <h2>Storage & Network</h2>
+          <div class="section-label">Network</div>
+          <div class="net-bar-row">
+            <span class="rx">↓ RX</span>
+            <div class="bar bar-sm"><span id="net-rx-bar" style="background:var(--net-rx)"></span></div>
+            <span class="val rx" id="net-rx">–</span>
+          </div>
+          <div class="net-bar-row">
+            <span class="tx">↑ TX</span>
+            <div class="bar bar-sm"><span id="net-tx-bar" style="background:var(--net-tx)"></span></div>
+            <span class="val tx" id="net-tx">–</span>
+          </div>
           <canvas class="spark" id="net-spark"></canvas>
-        </div>
-        <div class="card">
-          <h2>Disks</h2>
+          <div class="section-label section-gap">Storage</div>
           <div id="disks"></div>
-        </div>
-        <div class="card">
-          <h2>System</h2>
-          <div class="sub" id="os-info">–</div>
-          <div class="sub" id="uptime" style="margin-top:8px"></div>
         </div>
       </div>
     </div>`;
@@ -169,9 +158,15 @@ function renderMain(root: HTMLElement) {
 
   function update(s: Snapshot) {
     lastUpdate = Date.now();
-    $("host").textContent = `${s.hostname}`;
-    $("os-info").textContent = s.os || "–";
-    $("uptime").textContent = `Uptime: ${fmtUptime(s.uptime_secs)}`;
+    $("host").textContent = s.hostname;
+    $("spec-host").textContent = s.hostname;
+    $("spec-os").textContent = s.os || "–";
+    $("spec-cpu").textContent = formatCpuSpec(
+      s.cpu_cores || s.per_core.length,
+      s.physical_cores ?? 0,
+    );
+    $("spec-mem").textContent = fmtBytes(s.mem_total);
+    $("spec-uptime").textContent = fmtUptime(s.uptime_secs);
 
     // CPU
     const cpu = Math.round(s.cpu_usage);
@@ -207,10 +202,15 @@ function renderMain(root: HTMLElement) {
       $("swap-sub").textContent = "Swap: none";
     }
 
-    // Network
+    // Network + activity bars (scaled to recent peak)
     $("net-rx").textContent = fmtRate(s.net_rx_bps);
     $("net-tx").textContent = fmtRate(s.net_tx_bps);
     netHist.push(s.net_rx_bps + s.net_tx_bps);
+    const netPeak = Math.max(netHist.max(), s.net_rx_bps, s.net_tx_bps, 1);
+    ($("net-rx-bar") as HTMLElement).style.width =
+      `${netBarPct(s.net_rx_bps, netPeak)}%`;
+    ($("net-tx-bar") as HTMLElement).style.width =
+      `${netBarPct(s.net_tx_bps, netPeak)}%`;
     drawSpark($("net-spark") as HTMLCanvasElement, netHist, "#63b3ed");
 
     // Disks
@@ -229,7 +229,7 @@ function renderMain(root: HTMLElement) {
   listen<Snapshot>("metrics", (e) => update(e.payload));
 
   setInterval(() => {
-    const stale = Date.now() - lastUpdate > STALE_MS && lastUpdate > 0;
+    const stale = isStale(lastUpdate, Date.now());
     const dot = $("status-dot");
     dot.className = "dot" + (stale ? " err" : "");
     $("status-text").textContent = stale ? "stale" : "live";
@@ -242,20 +242,20 @@ function renderMain(root: HTMLElement) {
 function renderWidget(root: HTMLElement) {
   document.body.classList.add("widget");
   root.innerHTML = `
-    <div class="widget">
-      <div class="whead" data-tauri-drag-region>
+    <div class="widget" data-tauri-drag-region>
+      <div class="whead">
         <span class="name" id="w-host" data-tauri-drag-region>NodeWatch</span>
-        <span class="status-pill"><span class="dot" id="w-dot"></span></span>
+        <span class="status-pill"><span class="dot" id="w-dot" data-tauri-drag-region></span></span>
       </div>
-      <div class="metric">
+      <div class="metric" data-tauri-drag-region>
         <div class="row1"><span>CPU</span><span class="val" id="w-cpu">0%</span></div>
         <div class="bar"><span id="w-cpu-bar" style="background:var(--cpu)"></span></div>
       </div>
-      <div class="metric">
+      <div class="metric" data-tauri-drag-region>
         <div class="row1"><span>Memory</span><span class="val" id="w-mem">0%</span></div>
         <div class="bar"><span id="w-mem-bar" style="background:var(--mem)"></span></div>
       </div>
-      <div class="metric">
+      <div class="metric" data-tauri-drag-region>
         <div class="row1"><span>Net ↓</span><span class="val rx" id="w-rx">–</span></div>
         <div class="row1"><span>Net ↑</span><span class="val tx" id="w-tx">–</span></div>
       </div>
@@ -280,7 +280,7 @@ function renderWidget(root: HTMLElement) {
   listen<Snapshot>("metrics", (e) => update(e.payload));
 
   setInterval(() => {
-    const stale = Date.now() - lastUpdate > STALE_MS && lastUpdate > 0;
+    const stale = isStale(lastUpdate, Date.now());
     $("w-dot").className = "dot" + (stale ? " err" : "");
     $("w-alert").className = "alert" + (stale ? " show" : "");
   }, 1000);
