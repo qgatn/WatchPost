@@ -802,7 +802,7 @@ function widgetDisplayLabel(source: string, alias: string): string {
 
 function widgetStripHtml(source: string, label: string): string {
   return `
-    <div class="widget-strip" data-source="${source}" data-tauri-drag-region>
+    <div class="widget-strip" data-source="${source}" data-tauri-drag-region title="Double-click to open dashboard">
       <div class="seg seg-host" data-tauri-drag-region>
         <span class="dot w-dot"></span>
         <span class="name w-host" data-tauri-drag-region title="">${label}</span>
@@ -842,6 +842,12 @@ function renderWidget(root: HTMLElement) {
   const stack = document.getElementById("widget-stack")!;
   const win = getCurrentWindow();
   const knownSources = new Set<string>();
+
+  stack.addEventListener("dblclick", (e) => {
+    if ((e.target as HTMLElement).closest(".widget-strip")) {
+      invoke("show_main_window").catch(() => {});
+    }
+  });
 
   function syncNameColumnWidth(labels: string[]) {
     const cols = Math.min(

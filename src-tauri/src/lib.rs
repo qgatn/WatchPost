@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::{NewServer, ServerEntry};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 
 #[derive(Clone, serde::Serialize)]
 struct SourceStatus {
@@ -197,6 +197,18 @@ fn toggle_widget(app: AppHandle) -> Result<bool, String> {
     }
 }
 
+/// Show and focus the main dashboard (e.g. after closing it while the widget stays open).
+#[tauri::command]
+fn show_main_window(app: AppHandle) -> Result<(), String> {
+    let win = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    win.show().map_err(|e| e.to_string())?;
+    let _ = win.unminimize();
+    win.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn run_server_poller(app: AppHandle, entry: ServerEntry, stop: Arc<AtomicBool>) {
     const POLL_MS: u64 = 2500;
     const BACKOFF_MS: u64 = 5000;
@@ -270,6 +282,7 @@ pub fn run() {
         .manage(PollerRegistry::new())
         .invoke_handler(tauri::generate_handler![
             toggle_widget,
+            show_main_window,
             list_servers,
             add_server,
             remove_server,
@@ -277,12 +290,32 @@ pub fn run() {
             diagnose_server,
             get_ssh_setup_info,
         ])
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // Hide instead of destroy so the widget can reopen the dashboard.
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             let handle = app.handle().clone();
             start_local_sampler(handle.clone());
             start_saved_server_pollers(handle);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app_handle, event| {
+            // macOS: clicking the dock icon when no window is visible reopens main.
+            if let RunEvent::Reopen { .. } = event {
+                if let Some(win) = app_handle.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.unminimize();
+                    let _ = win.set_focus();
+                }
+            }
+        });
 }
