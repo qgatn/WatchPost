@@ -8,6 +8,8 @@ name: Release
 #
 # The release is created as a DRAFT — review the attached installers, then
 # click "Publish release" so users can download them from the Releases page.
+#
+# Before pushing a tag, run locally:  npm run release:check
 
 on:
   push:
@@ -23,14 +25,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Apple Silicon — native on macos-latest (arm64 runner).
           - platform: macos-latest
             args: "--target aarch64-apple-darwin"
-          - platform: macos-latest
-            args: "--target x86_64-apple-darwin"
+            rust-target: aarch64-apple-darwin
+          # Intel Mac — native on macos-13 (x86_64 runner). ssh2 uses vendored
+          # OpenSSL so cross-compiles also work if this runner is unavailable.
+          - platform: macos-13
+            args: ""
+            rust-target: ""
           - platform: windows-latest
             args: ""
+            rust-target: ""
           - platform: ubuntu-22.04
             args: ""
+            rust-target: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -43,8 +52,10 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Add Rust cross-target (macOS arm64)
+        if: matrix.rust-target != ''
+        run: rustup target add ${{ matrix.rust-target }}
 
       - name: Cache cargo
         uses: swatinem/rust-cache@v2
