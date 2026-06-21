@@ -14,6 +14,24 @@ export function fmtRate(bps: number): string {
   return `${fmtBytes(bps)}/s`;
 }
 
+const NET_IDLE_BPS = 1024;
+
+/** Second line under network sparkline: direction ratio + activity, or Idle. */
+export function netStatusLine(rxBps: number, txBps: number): string {
+  const total = rxBps + txBps;
+  if (total < NET_IDLE_BPS) return "Idle";
+
+  if (rxBps >= txBps * 1.25) {
+    const ratio = txBps > 0 ? Math.round((rxBps / txBps) * 10) / 10 : null;
+    return ratio !== null ? `↓ ${ratio}× download · Active` : "↓ download · Active";
+  }
+  if (txBps >= rxBps * 1.25) {
+    const ratio = rxBps > 0 ? Math.round((txBps / rxBps) * 10) / 10 : null;
+    return ratio !== null ? `↑ ${ratio}× upload · Active` : "↑ upload · Active";
+  }
+  return "Balanced · Active";
+}
+
 export function fmtUptime(s: number): string {
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
@@ -52,4 +70,14 @@ export function usageLabel(pct: number): string {
   if (level === "ok") return "healthy (≤50%)";
   if (level === "warn") return "elevated (>50%)";
   return "critical (>90%)";
+}
+
+/** Widget segment highlight: yellow when elevated (≥70%), red when high (≥90%). */
+export const SEGMENT_WARN_PCT = 70;
+export const SEGMENT_ERR_PCT = 90;
+
+export function segmentLevel(pct: number): UsageLevel {
+  if (pct >= SEGMENT_ERR_PCT) return "err";
+  if (pct >= SEGMENT_WARN_PCT) return "warn";
+  return "ok";
 }

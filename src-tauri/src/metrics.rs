@@ -3,7 +3,7 @@
 //! Kept deliberately small: we sample with `sysinfo`, compute a few derived
 //! values (CPU %, network rates), and hand a compact `Snapshot` to the UI.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, Networks, System};
@@ -67,7 +67,7 @@ pub fn disk_used_pct(total: u64, available: u64) -> f32 {
     (used as f64 / total as f64 * 100.0) as f32
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DiskInfo {
     pub name: String,
     pub mount: String,

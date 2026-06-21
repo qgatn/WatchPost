@@ -16,4 +16,13 @@ export class History {
   max(): number {
     return Math.max(1, ...this.buf);
   }
+
+  avg(): number {
+    if (this.buf.length === 0) return 0;
+    return this.buf.reduce((sum, v) => sum + v, 0) / this.buf.length;
+  }
+
+  clear() {
+    this.buf = [];
+  }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diskUsedPct, fmtBytes, fmtRate, fmtUptime, fmtUsers, fmtDiskUsage, usageLevel, usageLabel } from "./format";
+import { diskUsedPct, fmtBytes, fmtRate, fmtUptime, fmtUsers, fmtDiskUsage, netStatusLine, usageLevel, usageLabel, segmentLevel } from "./format";
 
 describe("fmtBytes", () => {
   it("formats bytes and scales up", () => {
@@ -54,6 +54,17 @@ describe("usageLevel", () => {
   });
 });
 
+describe("segmentLevel", () => {
+  it("uses widget thresholds: yellow >=70, red >=90", () => {
+    expect(segmentLevel(0)).toBe("ok");
+    expect(segmentLevel(69)).toBe("ok");
+    expect(segmentLevel(70)).toBe("warn");
+    expect(segmentLevel(89)).toBe("warn");
+    expect(segmentLevel(90)).toBe("err");
+    expect(segmentLevel(100)).toBe("err");
+  });
+});
+
 describe("usageLabel", () => {
   it("describes threshold bands", () => {
     expect(usageLabel(30)).toContain("healthy");
@@ -69,5 +80,23 @@ describe("diskUsedPct", () => {
 
   it("computes used percentage", () => {
     expect(diskUsedPct(1000, 250)).toBe(75);
+  });
+});
+
+describe("netStatusLine", () => {
+  it("returns Idle for low traffic", () => {
+    expect(netStatusLine(100, 100)).toBe("Idle");
+  });
+
+  it("describes download-heavy traffic", () => {
+    expect(netStatusLine(4000, 1000)).toBe("↓ 4× download · Active");
+  });
+
+  it("describes upload-heavy traffic", () => {
+    expect(netStatusLine(1000, 3000)).toBe("↑ 3× upload · Active");
+  });
+
+  it("describes balanced traffic", () => {
+    expect(netStatusLine(2000, 1800)).toBe("Balanced · Active");
   });
 });

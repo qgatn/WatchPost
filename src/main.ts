@@ -2,8 +2,36 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { diskUsedPct, fmtBytes, fmtRate, fmtUptime, fmtUsers, fmtDiskUsage, usageLevel } from "./format";
+import {
+  diskUsedPct,
+  fmtBytes,
+  fmtRate,
+  fmtUptime,
+  fmtUsers,
+  fmtDiskUsage,
+  netStatusLine,
+  usageLevel,
+  segmentLevel,
+} from "./format";
+import { displayDisks, primaryDisk } from "./disks";
 import { History } from "./history";
+import lighthouseUrl from "./assets/lighthouse.png";
+import {
+  addServer,
+  ALIAS_MAX_LEN,
+  buildSetupCommands,
+  copyText,
+  diagnoseServer,
+  entryToNewServer,
+  getSshSetupInfo,
+  listServers,
+  testServer,
+  type DiagnoseResult,
+  type NewServer,
+  type ServerEntry,
+  type SourceStatus,
+  type SshSetupInfo,
+} from "./servers";
 import { isStale } from "./status";
 
 interface DiskInfo {
@@ -70,28 +98,79 @@ function drawSpark(
   ctx.fill();
 }
 
+function drawDualSpark(
+  canvas: HTMLCanvasElement,
+  rxHist: History,
+  txHist: History,
+  rxColor: string,
+  txColor: string,
+) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const rxVals = rxHist.values();
+  const txVals = txHist.values();
+  const len = Math.min(rxVals.length, txVals.length);
+  if (len < 2) return;
+
+  const max = Math.max(rxHist.max(), txHist.max(), 1);
+  const step = w / (len - 1);
+  const context = ctx;
+
+  function strokeSeries(vals: number[], color: string, fill: string) {
+    context.beginPath();
+    vals.forEach((v, i) => {
+      const x = i * step;
+      const y = h - (Math.min(v, max) / max) * h;
+      i === 0 ? context.moveTo(x, y) : context.lineTo(x, y);
+    });
+    context.strokeStyle = color;
+    context.lineWidth = 1.5;
+    context.stroke();
+    context.lineTo(w, h);
+    context.lineTo(0, h);
+    context.closePath();
+    context.fillStyle = fill;
+    context.fill();
+  }
+
+  strokeSeries(txVals.slice(-len), txColor, txColor + "18");
+  strokeSeries(rxVals.slice(-len), rxColor, rxColor + "22");
+}
+
 // ---------- staleness / alert tracking ----------
-let lastUpdate = 0;
+const lastUpdateBySource = new Map<string, number>();
+const snapshotsBySource = new Map<string, Snapshot>();
+const sourceStatusBySource = new Map<string, SourceStatus>();
+
+function formatTime(tsMs: number): string {
+  return new Date(tsMs).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatDiagnoseResult(result: DiagnoseResult): string {
+  return result.steps
+    .map((s) => `${s.ok ? "OK" : "FAIL"}  ${s.step}\n     ${s.detail}`)
+    .join("\n");
+}
 
 function formatCpuSpec(cores: number, physical: number): string {
   if (physical > 0 && physical !== cores) {
     return `${cores} cores (${physical} physical)`;
   }
   return `${cores} core${cores === 1 ? "" : "s"}`;
-}
-
-function netBarPct(bps: number, maxBps: number): number {
-  if (maxBps <= 0) return 0;
-  return Math.min(100, (bps / maxBps) * 100);
-}
-
-function primaryDisk(disks: DiskInfo[]): DiskInfo | undefined {
-  return disks.find((d) => d.mount === "/") ?? disks[0];
-}
-
-function secondaryDisk(disks: DiskInfo[]): DiskInfo | undefined {
-  const primary = primaryDisk(disks);
-  return disks.find((d) => d !== primary);
 }
 
 function diskBarColor(pct: number): string {
@@ -108,30 +187,24 @@ function setBar(elId: string, pct: number, color: string) {
   bar.style.background = color;
 }
 
-function updateDiskRow(
-  $: (id: string) => HTMLElement,
-  prefix: string,
-  disk: DiskInfo | undefined,
-  fallbackLabel: string,
-) {
-  const label = $(`${prefix}-label`);
-  const pctEl = $(`${prefix}-pct`);
-  const sub = $(`${prefix}-sub`);
-  const bar = $(`${prefix}-bar`);
-  if (!disk || disk.total <= 0) {
-    label.textContent = fallbackLabel;
-    pctEl.textContent = "–";
-    sub.textContent = "–";
-    bar.style.width = "0%";
-    return;
-  }
+function fillDiskRow(row: HTMLElement, disk: DiskInfo) {
   const used = disk.total - disk.available;
   const pct = diskUsedPct(disk.total, disk.available);
-  label.textContent = disk.mount;
-  pctEl.textContent = `${Math.round(pct)}%`;
-  sub.textContent = `${fmtBytes(used)} / ${fmtBytes(disk.total)}`;
+  row.querySelector(".disk-label")!.textContent = disk.mount;
+  row.querySelector(".disk-pct")!.textContent = `${Math.round(pct)}%`;
+  row.querySelector(".disk-sub")!.textContent = `${fmtBytes(used)} / ${fmtBytes(disk.total)}`;
+  const bar = row.querySelector(".disk-bar") as HTMLElement;
   bar.style.width = `${pct}%`;
   bar.style.background = diskBarColor(pct);
+}
+
+function diskRowHtml(): string {
+  return `
+    <div class="bar-row">
+      <div class="bar-label"><span class="disk-label">Disk</span><span class="disk-pct">–</span></div>
+      <div class="bar bar-sm"><span class="disk-bar"></span></div>
+      <div class="bar-sub disk-sub">–</div>
+    </div>`;
 }
 
 //  MAIN WINDOW
@@ -142,12 +215,96 @@ function renderMain(root: HTMLElement) {
     <div class="main">
       <div class="topbar">
         <div class="brand">
+          <span class="brand-logo" id="brand-logo" aria-hidden="true"></span>
           <h1>WatchPost</h1>
-          <span class="host" id="host">connecting…</span>
+          <select id="source-select" class="source-select" aria-label="Monitor target">
+            <option value="local">Local</option>
+          </select>
         </div>
-        <div style="display:flex;align-items:center;gap:14px;">
+        <div class="topbar-actions">
           <span class="status-pill"><span class="dot" id="status-dot"></span><span id="status-text">live</span></span>
-          <button id="widget-btn">Open Widget</button>
+          <button type="button" id="add-server-btn" class="btn-ghost">+ Add server</button>
+          <button type="button" id="diag-btn" class="btn-ghost hidden">Diagnostics</button>
+          <button type="button" id="widget-btn">Open Widget</button>
+        </div>
+      </div>
+      <div id="diag-panel" class="diag-panel hidden" aria-hidden="true">
+        <div class="diag-header">
+          <h2 id="diag-title">Diagnostics</h2>
+          <button type="button" id="diag-close" class="btn-ghost" aria-label="Close">✕</button>
+        </div>
+        <p class="diag-hint" id="diag-hint">Live poller messages and step-by-step checks for the selected server.</p>
+        <div class="diag-actions">
+          <button type="button" id="diag-run">Run full check</button>
+          <button type="button" id="diag-copy" class="btn-ghost">Copy log</button>
+        </div>
+        <pre class="diag-log" id="diag-log"></pre>
+      </div>
+      <div id="add-server-modal" class="modal hidden" aria-hidden="true">
+        <div class="modal-backdrop" data-close-modal></div>
+        <div class="modal-panel" role="dialog" aria-labelledby="modal-title">
+          <h2 id="modal-title">Add SSH server</h2>
+          <div class="modal-steps">
+            <span class="step-pill active" data-step-pill="1">1 Details</span>
+            <span class="step-pill" data-step-pill="2">2 Setup</span>
+            <span class="step-pill" data-step-pill="3">3 Test</span>
+          </div>
+          <div class="modal-body" data-step="1">
+            <label>Alias <input id="srv-alias" placeholder="prod-web" maxlength="${ALIAS_MAX_LEN}" /><span class="field-hint">Short name, max ${ALIAS_MAX_LEN} characters</span></label>
+            <label>Host <input id="srv-host" placeholder="192.168.1.50" /></label>
+            <label>Port <input id="srv-port" type="number" value="22" /></label>
+            <label>User <input id="srv-user" placeholder="deploy" /></label>
+            <p class="modal-hint">Uses your SSH agent (same keys as Terminal). One-time: put your <strong>public</strong> key on the server.</p>
+          </div>
+          <div class="modal-body hidden" data-step="2">
+            <p class="modal-hint">WatchPost logs in with your SSH key — no passwords stored. Run these once per server, top to bottom.</p>
+            <p class="modal-hint" id="setup-key-status">Checking for SSH key…</p>
+            <pre class="setup-key-line hidden" id="setup-pubkey"></pre>
+            <button type="button" class="btn-ghost hidden" id="copy-pubkey">Copy public key</button>
+            <div class="tab-row">
+              <button type="button" class="tab active" data-shell-tab="bash">Bash</button>
+              <button type="button" class="tab" data-shell-tab="ps">PowerShell</button>
+            </div>
+            <div class="cmd-block" data-shell-panel="bash">
+              <div class="cmd-item">
+                <div class="cmd-row"><span class="cmd-lbl">1 · Generate key</span><pre id="cmd-bash-keygen"></pre><button type="button" class="copy-cmd" data-copy="cmd-bash-keygen">Copy</button></div>
+                <p class="cmd-why" id="why-bash-keygen">Creates an SSH key pair if you don't have one yet.</p>
+              </div>
+              <div class="cmd-item">
+                <div class="cmd-row"><span class="cmd-lbl">2 · Install on server</span><pre id="cmd-bash-copy"></pre><button type="button" class="copy-cmd" data-copy="cmd-bash-copy">Copy</button></div>
+                <p class="cmd-why">Adds your public key to the server's authorized_keys so WatchPost can log in without a password.</p>
+              </div>
+              <div class="cmd-item">
+                <div class="cmd-row"><span class="cmd-lbl">3 · Test SSH</span><pre id="cmd-bash-test"></pre><button type="button" class="copy-cmd" data-copy="cmd-bash-test">Copy</button></div>
+                <p class="cmd-why">Confirms it works — you should connect without being asked for a password.</p>
+              </div>
+            </div>
+            <div class="cmd-block hidden" data-shell-panel="ps">
+              <div class="cmd-item">
+                <div class="cmd-row"><span class="cmd-lbl">1 · Generate key</span><pre id="cmd-ps-keygen"></pre><button type="button" class="copy-cmd" data-copy="cmd-ps-keygen">Copy</button></div>
+                <p class="cmd-why" id="why-ps-keygen">Creates an SSH key pair if you don't have one yet.</p>
+              </div>
+              <div class="cmd-item">
+                <div class="cmd-row"><span class="cmd-lbl">2 · Install on server</span><pre id="cmd-ps-copy"></pre><button type="button" class="copy-cmd" data-copy="cmd-ps-copy">Copy</button></div>
+                <p class="cmd-why">Adds your public key to the server's authorized_keys so WatchPost can log in without a password.</p>
+              </div>
+              <div class="cmd-item">
+                <div class="cmd-row"><span class="cmd-lbl">3 · Test SSH</span><pre id="cmd-ps-test"></pre><button type="button" class="copy-cmd" data-copy="cmd-ps-test">Copy</button></div>
+                <p class="cmd-why">Confirms it works — you should connect without being asked for a password.</p>
+              </div>
+            </div>
+          </div>
+          <div class="modal-body hidden" data-step="3">
+            <p id="test-result" class="test-result">Click Test connection to verify.</p>
+            <button type="button" id="test-server-btn">Test connection</button>
+            <button type="button" id="test-diag-btn" class="btn-ghost">Run full diagnostics</button>
+          </div>
+          <div class="modal-footer">
+            <button type="button" id="modal-cancel">Cancel</button>
+            <button type="button" id="modal-back" class="hidden">Back</button>
+            <button type="button" id="modal-next">Continue</button>
+            <button type="button" id="modal-save" class="hidden">Save & monitor</button>
+          </div>
         </div>
       </div>
       <div class="grid grid-4">
@@ -186,65 +343,238 @@ function renderMain(root: HTMLElement) {
             </div>
           </div>
           <div class="card-divider"></div>
-          <div class="card-section">
-            <div class="bar-row">
-              <div class="bar-label"><span id="disk1-label">Disk</span><span id="disk1-pct">–</span></div>
-              <div class="bar bar-sm"><span id="disk1-bar"></span></div>
-              <div class="bar-sub" id="disk1-sub">–</div>
-            </div>
-            <div class="bar-row">
-              <div class="bar-label"><span id="disk2-label">Disk 2</span><span id="disk2-pct">–</span></div>
-              <div class="bar bar-sm"><span id="disk2-bar"></span></div>
-              <div class="bar-sub" id="disk2-sub">–</div>
-            </div>
-          </div>
+          <div class="card-section" id="disk-rows"></div>
         </div>
-        <div class="card card-net-sessions">
-          <h2>Network & Sessions</h2>
+        <div class="card card-net">
+          <h2>Network</h2>
           <div class="card-section">
-            <div class="net-bar-row">
-              <span class="rx">↓ RX</span>
-              <div class="bar bar-sm"><span id="net-rx-bar" style="background:var(--net-rx)"></span></div>
-              <span class="val rx" id="net-rx">–</span>
+            <div class="net-summary">
+              <span class="net-stat rx"><span class="net-dir">↓</span> <span id="net-rx">–</span></span>
+              <span class="net-stat total"><span class="net-dir">Σ</span> <span id="net-total">–</span></span>
+              <span class="net-stat tx"><span class="net-dir">↑</span> <span id="net-tx">–</span></span>
             </div>
-            <div class="net-bar-row">
-              <span class="tx">↑ TX</span>
-              <div class="bar bar-sm"><span id="net-tx-bar" style="background:var(--net-tx)"></span></div>
-              <span class="val tx" id="net-tx">–</span>
+            <canvas class="spark net-spark-dual" id="net-spark"></canvas>
+            <div class="net-stats">
+              <span>Avg: <span id="net-avg">–</span></span>
+              <span>Peak: <span id="net-peak">–</span></span>
             </div>
-            <canvas class="spark" id="net-spark"></canvas>
-            <div class="bar-sub" id="net-peak">Peak: –</div>
-          </div>
-          <div class="card-divider"></div>
-          <div class="card-section">
-            <div class="session-stat">
-              <span class="session-lbl">Active users</span>
-              <span class="session-val" id="sess-users">–</span>
-            </div>
-            <div class="session-stat">
-              <span class="session-lbl">Uptime</span>
-              <span class="session-val" id="sess-uptime">–</span>
-            </div>
+            <div class="net-status" id="net-status">–</div>
           </div>
         </div>
       </div>
     </div>`;
 
   const cpuHist = new History(60);
-  const netHist = new History(60);
+  const netRxHist = new History(60);
+  const netTxHist = new History(60);
+  const netTotalHist = new History(60);
   const $ = (id: string) => document.getElementById(id)!;
 
-  $("widget-btn").addEventListener("click", async () => {
-    const visible = await invoke<boolean>("toggle_widget");
-    $("widget-btn").textContent = visible ? "Hide Widget" : "Open Widget";
-  });
+  const brandLogo = $("brand-logo");
+  brandLogo.style.webkitMaskImage = `url(${lighthouseUrl})`;
+  brandLogo.style.maskImage = `url(${lighthouseUrl})`;
 
+  let selectedSource = "local";
   let coresBuilt = 0;
+  let lastCoreCount = 0;
+  let modalStep = 1;
+  let setupInfo: SshSetupInfo | null = null;
+  let savedServers: ServerEntry[] = [];
+  let diskSectionKey = "";
+  let diagLogLines: string[] = [];
 
-  function update(s: Snapshot) {
-    lastUpdate = Date.now();
-    $("host").textContent = s.hostname;
-    $("spec-host").textContent = s.hostname;
+  function appendDiag(line: string) {
+    diagLogLines.push(line);
+    const log = $("diag-log");
+    log.textContent = diagLogLines.join("\n");
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function openDiagPanel(title: string) {
+    $("diag-title").textContent = title;
+    $("diag-panel").classList.remove("hidden");
+    $("diag-panel").setAttribute("aria-hidden", "false");
+  }
+
+  function closeDiagPanel() {
+    $("diag-panel").classList.add("hidden");
+    $("diag-panel").setAttribute("aria-hidden", "true");
+  }
+
+  function updateDiagButtonVisibility() {
+    $("diag-btn").classList.toggle("hidden", selectedSource === "local");
+  }
+
+  function renderDiagStatusForSource(source: string) {
+    const st = sourceStatusBySource.get(source);
+    if (st) {
+      const tag = st.ok ? "OK" : "ERR";
+      appendDiag(`[${formatTime(st.ts_ms)}] ${tag}  ${st.message}`);
+    }
+  }
+
+  async function runDiagnostics(server: NewServer, label: string) {
+    openDiagPanel(`Diagnostics — ${label}`);
+    diagLogLines = [];
+    appendDiag(`--- full check started ${new Date().toLocaleString()} ---`);
+    $("diag-run").textContent = "Running…";
+    try {
+      const result = await diagnoseServer(server);
+      appendDiag(formatDiagnoseResult(result));
+      appendDiag(result.ok ? "--- all checks passed ---" : "--- check failed — see FAIL lines above ---");
+    } catch (e) {
+      appendDiag(`FAIL  diagnose command\n     ${String(e)}`);
+    } finally {
+      $("diag-run").textContent = "Run full check";
+    }
+  }
+
+  function serverForSelectedSource(): NewServer | null {
+    if (selectedSource === "local") return null;
+    const entry = savedServers.find((s) => s.alias === selectedSource);
+    return entry ? entryToNewServer(entry) : null;
+  }
+
+  function readForm(): NewServer | null {
+    const alias = ($("srv-alias") as HTMLInputElement).value.trim();
+    const host = ($("srv-host") as HTMLInputElement).value.trim();
+    const port = Number(($("srv-port") as HTMLInputElement).value) || 22;
+    const user = ($("srv-user") as HTMLInputElement).value.trim();
+    if (!alias || !host || !user) return null;
+    if (alias.length > ALIAS_MAX_LEN) return null;
+    return { alias, host, port, user, auth: "agent", key_path: null };
+  }
+
+  function refreshSourceSelect(servers: ServerEntry[]) {
+    const sel = $("source-select") as HTMLSelectElement;
+    const prev = sel.value;
+    sel.innerHTML = `<option value="local">Local</option>`;
+    for (const s of servers) {
+      const opt = document.createElement("option");
+      opt.value = s.alias;
+      opt.textContent = s.alias;
+      sel.appendChild(opt);
+    }
+    if (prev === "local" || servers.some((s) => s.alias === prev)) {
+      sel.value = prev;
+    }
+    selectedSource = sel.value;
+    updateDiagButtonVisibility();
+  }
+
+  async function loadServersList() {
+    savedServers = await listServers();
+    refreshSourceSelect(savedServers);
+  }
+
+  function layoutCores(coreCount: number) {
+    const cores = $("cores");
+    const scroll = cores.parentElement as HTMLElement | null;
+    if (!scroll || coreCount <= 0) return;
+
+    const gap = 2;
+    const minCoreWidth = 4;
+    const available = scroll.clientWidth;
+    const fitWidth = Math.floor((available - gap * (coreCount - 1)) / coreCount);
+
+    if (fitWidth >= minCoreWidth) {
+      cores.style.width = "100%";
+      cores.style.gridTemplateColumns = `repeat(${coreCount}, minmax(0, 1fr))`;
+    } else {
+      const totalWidth = coreCount * minCoreWidth + gap * (coreCount - 1);
+      cores.style.width = `${totalWidth}px`;
+      cores.style.gridTemplateColumns = `repeat(${coreCount}, ${minCoreWidth}px)`;
+    }
+  }
+
+  function setModalStep(step: number) {
+    modalStep = step;
+    document.querySelectorAll("[data-step]").forEach((el) => {
+      el.classList.toggle("hidden", el.getAttribute("data-step") !== String(step));
+    });
+    document.querySelectorAll("[data-step-pill]").forEach((el) => {
+      el.classList.toggle("active", el.getAttribute("data-step-pill") === String(step));
+    });
+    $("modal-back").classList.toggle("hidden", step === 1);
+    $("modal-next").classList.toggle("hidden", step === 3);
+    $("modal-save").classList.toggle("hidden", step !== 3);
+  }
+
+  function openModal() {
+    const modal = $("add-server-modal");
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+    setModalStep(1);
+    ($("test-result") as HTMLElement).textContent = "Click Test connection to verify.";
+    ($("test-result") as HTMLElement).className = "test-result";
+  }
+
+  function closeModal() {
+    const modal = $("add-server-modal");
+    modal.classList.add("hidden");
+    modal.setAttribute("aria-hidden", "true");
+  }
+
+  function fillSetupCommands() {
+    const form = readForm();
+    if (!form) return;
+    const cmds = buildSetupCommands(form.host, form.port, form.user);
+    $("cmd-bash-keygen").textContent = cmds.bashKeygen;
+    $("cmd-bash-copy").textContent = cmds.bashCopyId;
+    $("cmd-bash-test").textContent = cmds.bashTest;
+    $("cmd-ps-keygen").textContent = cmds.psKeygen;
+    $("cmd-ps-copy").textContent = cmds.psCopyId;
+    $("cmd-ps-test").textContent = cmds.psTest;
+  }
+
+  async function refreshSetupInfo() {
+    setupInfo = await getSshSetupInfo();
+    const status = $("setup-key-status");
+    const pub = $("setup-pubkey");
+    const copyBtn = $("copy-pubkey");
+    const keygenWhy = [$("why-bash-keygen"), $("why-ps-keygen")];
+    if (setupInfo.has_public_key && setupInfo.public_key) {
+      status.textContent = `Found public key: ${setupInfo.public_key_path}`;
+      pub.textContent = setupInfo.public_key;
+      pub.classList.remove("hidden");
+      copyBtn.classList.remove("hidden");
+      for (const el of keygenWhy) {
+        el.textContent = "You already have a key (shown above) — you can skip this step.";
+        el.classList.add("cmd-why-optional");
+      }
+    } else {
+      status.textContent = "No public key found — generate one with the command below.";
+      pub.classList.add("hidden");
+      copyBtn.classList.add("hidden");
+      for (const el of keygenWhy) {
+        el.textContent = "You don't have an SSH key yet — run this first to create one.";
+        el.classList.remove("cmd-why-optional");
+      }
+    }
+  }
+
+  function updateDiskSection(disks: DiskInfo[]) {
+    const list = displayDisks(disks);
+    const key = list.map((d) => `${d.mount}:${d.total}`).join("|");
+    const container = $("disk-rows");
+    if (key !== diskSectionKey) {
+      diskSectionKey = key;
+      container.innerHTML =
+        list.length === 0
+          ? `<p class="bar-sub disk-empty">No disks detected</p>`
+          : list.map(() => diskRowHtml()).join("");
+    }
+    container.querySelectorAll<HTMLElement>(".bar-row").forEach((row, i) => {
+      if (list[i]) fillDiskRow(row, list[i]);
+    });
+  }
+
+  function applySnapshot(s: Snapshot) {
+    snapshotsBySource.set(s.source, s);
+    lastUpdateBySource.set(s.source, Date.now());
+    if (s.source !== selectedSource) return;
+
+    $("spec-host").textContent = s.source === "local" ? s.hostname : `${s.source} — ${s.hostname}`;
     $("spec-os").textContent = s.os || "–";
     $("spec-cpu").textContent = formatCpuSpec(
       s.cpu_cores || s.per_core.length,
@@ -254,14 +584,13 @@ function renderMain(root: HTMLElement) {
     $("spec-users").textContent = fmtUsers(s.active_users ?? 0);
     $("spec-uptime").textContent = fmtUptime(s.uptime_secs);
 
-    // CPU
     const cpu = Math.round(s.cpu_usage);
     const coreCount = s.per_core.length;
     $("cpu-pct").textContent = `${cpu}%`;
     $("cpu-big").textContent = `${cpu}%`;
     $("cores-count").textContent = `${coreCount} core${coreCount === 1 ? "" : "s"}`;
     cpuHist.push(s.cpu_usage);
-    drawSpark($("cpu-spark") as HTMLCanvasElement, cpuHist, "#4fd1c5", 100);
+    drawSpark($("cpu-spark") as HTMLCanvasElement, cpuHist, "#d8dee4", 100);
 
     const cores = $("cores");
     if (coresBuilt !== coreCount) {
@@ -269,13 +598,14 @@ function renderMain(root: HTMLElement) {
         .map((_, i) => `<div class="core" title="Core ${i + 1}"><span id="core-${i}"></span></div>`)
         .join("");
       coresBuilt = coreCount;
+      lastCoreCount = coreCount;
     }
+    layoutCores(coreCount);
     s.per_core.forEach((v, i) => {
       const el = document.getElementById(`core-${i}`);
       if (el) el.style.height = `${Math.min(100, v)}%`;
     });
 
-    // Memory & Storage (4 bars)
     const memPct = s.mem_total ? (s.mem_used / s.mem_total) * 100 : 0;
     $("mem-pct").textContent = `${Math.round(memPct)}%`;
     $("mem-sub").textContent = `${fmtBytes(s.mem_used)} / ${fmtBytes(s.mem_total)}`;
@@ -290,36 +620,212 @@ function renderMain(root: HTMLElement) {
       $("swap-sub").textContent = "none";
       setBar("swap-bar", 0, "var(--warn)");
     }
-    updateDiskRow($, "disk1", primaryDisk(s.disks), "Disk");
-    updateDiskRow($, "disk2", secondaryDisk(s.disks), "Disk 2");
+    updateDiskSection(s.disks);
 
-    // Network & Sessions
     $("net-rx").textContent = fmtRate(s.net_rx_bps);
     $("net-tx").textContent = fmtRate(s.net_tx_bps);
-    netHist.push(s.net_rx_bps + s.net_tx_bps);
-    const netPeak = Math.max(netHist.max(), s.net_rx_bps, s.net_tx_bps, 1);
-    ($("net-rx-bar") as HTMLElement).style.width = `${netBarPct(s.net_rx_bps, netPeak)}%`;
-    ($("net-tx-bar") as HTMLElement).style.width = `${netBarPct(s.net_tx_bps, netPeak)}%`;
-    $("net-peak").textContent = `Peak: ${fmtRate(netPeak)}`;
-    drawSpark($("net-spark") as HTMLCanvasElement, netHist, "#63b3ed");
-    $("sess-users").textContent = fmtUsers(s.active_users ?? 0);
-    $("sess-uptime").textContent = fmtUptime(s.uptime_secs);
+    $("net-total").textContent = fmtRate(s.net_rx_bps + s.net_tx_bps);
+    netRxHist.push(s.net_rx_bps);
+    netTxHist.push(s.net_tx_bps);
+    netTotalHist.push(s.net_rx_bps + s.net_tx_bps);
+    const netPeak = Math.max(netTotalHist.max(), s.net_rx_bps + s.net_tx_bps, 1);
+    $("net-avg").textContent = fmtRate(netTotalHist.avg());
+    $("net-peak").textContent = fmtRate(netPeak);
+    $("net-status").textContent = netStatusLine(s.net_rx_bps, s.net_tx_bps);
+    drawDualSpark(
+      $("net-spark") as HTMLCanvasElement,
+      netRxHist,
+      netTxHist,
+      "#63b3ed",
+      "#b794f4",
+    );
   }
 
-  listen<Snapshot>("metrics", (e) => update(e.payload));
+  $("widget-btn").addEventListener("click", async () => {
+    const visible = await invoke<boolean>("toggle_widget");
+    $("widget-btn").textContent = visible ? "Hide Widget" : "Open Widget";
+  });
+
+  $("source-select").addEventListener("change", () => {
+    selectedSource = ($("source-select") as HTMLSelectElement).value;
+    updateDiagButtonVisibility();
+    cpuHist.clear();
+    netRxHist.clear();
+    netTxHist.clear();
+    netTotalHist.clear();
+    coresBuilt = 0;
+    lastCoreCount = 0;
+    const cached = snapshotsBySource.get(selectedSource);
+    if (cached) applySnapshot(cached);
+  });
+
+  window.addEventListener("resize", () => {
+    if (lastCoreCount > 0) layoutCores(lastCoreCount);
+  });
+
+  $("add-server-btn").addEventListener("click", () => openModal());
+  $("modal-cancel").addEventListener("click", () => closeModal());
+  document.querySelectorAll("[data-close-modal]").forEach((el) => {
+    el.addEventListener("click", () => closeModal());
+  });
+
+  $("modal-back").addEventListener("click", () => setModalStep(modalStep - 1));
+
+  $("modal-next").addEventListener("click", async () => {
+    const form = readForm();
+    if (!form) {
+      const alias = ($("srv-alias") as HTMLInputElement).value.trim();
+      if (alias.length > ALIAS_MAX_LEN) {
+        alert(`Alias must be at most ${ALIAS_MAX_LEN} characters.`);
+      } else {
+        alert("Alias, host, and user are required.");
+      }
+      return;
+    }
+    if (modalStep === 1) {
+      fillSetupCommands();
+      await refreshSetupInfo();
+      setModalStep(2);
+    } else if (modalStep === 2) {
+      setModalStep(3);
+    }
+  });
+
+  document.querySelectorAll("[data-shell-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tab = btn.getAttribute("data-shell-tab")!;
+      document.querySelectorAll("[data-shell-tab]").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      document.querySelectorAll("[data-shell-panel]").forEach((p) => {
+        p.classList.toggle("hidden", p.getAttribute("data-shell-panel") !== tab);
+      });
+    });
+  });
+
+  document.querySelectorAll(".copy-cmd").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-copy")!;
+      const text = $(id).textContent ?? "";
+      copyText(text).catch(() => {});
+    });
+  });
+
+  $("copy-pubkey").addEventListener("click", () => {
+    if (setupInfo?.public_key) copyText(setupInfo.public_key).catch(() => {});
+  });
+
+  $("test-server-btn").addEventListener("click", async () => {
+    const form = readForm();
+    if (!form) return;
+    const result = $("test-result");
+    result.textContent = "Testing…";
+    result.className = "test-result";
+    const r = await testServer(form);
+    if (r.ok) {
+      result.textContent = `Connected — ${r.os ?? "?"} — ${r.hostname ?? "?"} (${r.latency_ms}ms)`;
+      result.className = "test-result ok";
+    } else {
+      result.textContent = r.message;
+      result.className = "test-result err";
+    }
+  });
+
+  $("test-diag-btn").addEventListener("click", async () => {
+    const form = readForm();
+    if (!form) return;
+    await runDiagnostics(form, form.alias);
+  });
+
+  $("diag-btn").addEventListener("click", () => {
+    const server = serverForSelectedSource();
+    if (!server) return;
+    diagLogLines = [];
+    appendDiag(`--- ${server.alias} ---`);
+    renderDiagStatusForSource(server.alias);
+    openDiagPanel(`Diagnostics — ${server.alias}`);
+  });
+
+  $("diag-close").addEventListener("click", () => closeDiagPanel());
+
+  $("diag-run").addEventListener("click", async () => {
+    const server = serverForSelectedSource() ?? readForm();
+    if (!server) return;
+    await runDiagnostics(server, server.alias);
+  });
+
+  $("diag-copy").addEventListener("click", () => {
+    copyText($("diag-log").textContent ?? "").catch(() => {});
+  });
+
+  listen<SourceStatus>("source-status", (e) => {
+    const st = e.payload;
+    sourceStatusBySource.set(st.source, st);
+    if (st.source === selectedSource && !$("diag-panel").classList.contains("hidden")) {
+      const tag = st.ok ? "OK" : "ERR";
+      appendDiag(`[${formatTime(st.ts_ms)}] ${tag}  ${st.message}`);
+    }
+  });
+
+  $("modal-save").addEventListener("click", async () => {
+    const form = readForm();
+    if (!form) return;
+    try {
+      await addServer(form);
+      await loadServersList();
+      closeModal();
+    } catch (e) {
+      alert(String(e));
+    }
+  });
+
+  listen<Snapshot>("metrics", (e) => applySnapshot(e.payload));
 
   setInterval(() => {
-    const stale = isStale(lastUpdate, Date.now());
-    const dot = $("status-dot");
-    dot.className = "dot" + (stale ? " err" : "");
-    $("status-text").textContent = stale ? "stale" : "live";
+    const ts = lastUpdateBySource.get(selectedSource) ?? 0;
+    const stale = ts > 0 && isStale(ts, Date.now());
+    $("status-dot").className = "dot" + (stale ? " err" : ts > 0 ? "" : " warn");
+    $("status-text").textContent = ts === 0 ? "waiting" : stale ? "stale" : "live";
   }, 1000);
+
+  loadServersList().catch(() => {});
 }
 
 // =====================================================================
 function setSegmentUsage(seg: HTMLElement, pct: number) {
   seg.classList.remove("usage-ok", "usage-warn", "usage-err");
-  seg.classList.add(`usage-${usageLevel(pct)}`);
+  seg.classList.add(`usage-${segmentLevel(pct)}`);
+}
+
+function widgetDisplayLabel(source: string, alias: string): string {
+  return source === "local" ? "Local" : alias;
+}
+
+function widgetStripHtml(source: string, label: string): string {
+  return `
+    <div class="widget-strip" data-source="${source}" data-tauri-drag-region>
+      <div class="seg seg-host" data-tauri-drag-region>
+        <span class="dot w-dot"></span>
+        <span class="name w-host" data-tauri-drag-region title="">${label}</span>
+      </div>
+      <div class="seg seg-metric" data-tauri-drag-region>
+        <span class="lbl">CPU</span>
+        <span class="val w-cpu">0%</span>
+        <div class="bar bar-inline"><span class="w-cpu-bar"></span></div>
+      </div>
+      <div class="seg seg-metric" data-tauri-drag-region>
+        <span class="lbl">MEM</span>
+        <span class="val w-mem">0%</span>
+        <div class="bar bar-inline"><span class="w-mem-bar"></span></div>
+      </div>
+      <div class="seg seg-storage" data-tauri-drag-region>
+        <span class="lbl">DISK</span>
+        <span class="val w-disk">–</span>
+      </div>
+      <div class="seg seg-net" data-tauri-drag-region>
+        <span class="rx w-rx">↓ –</span>
+        <span class="tx w-tx">↑ –</span>
+      </div>
+    </div>`;
 }
 
 //  WIDGET WINDOW
@@ -329,45 +835,38 @@ function renderWidget(root: HTMLElement) {
   root.classList.add("widget-root");
   root.innerHTML = `
     <div class="widget-wrap" id="widget-wrap">
-      <div class="widget-strip" id="widget-strip" data-tauri-drag-region>
-        <div class="seg seg-host" data-tauri-drag-region>
-          <span class="dot" id="w-dot"></span>
-          <span class="name" id="w-host" data-tauri-drag-region>…</span>
-        </div>
-        <div class="seg seg-users" data-tauri-drag-region>
-          <span id="w-users">–</span>
-        </div>
-        <div class="seg seg-metric" data-tauri-drag-region>
-          <span class="lbl">CPU</span>
-          <span class="val" id="w-cpu">0%</span>
-          <div class="bar bar-inline"><span id="w-cpu-bar"></span></div>
-        </div>
-        <div class="seg seg-metric" data-tauri-drag-region>
-          <span class="lbl">MEM</span>
-          <span class="val" id="w-mem">0%</span>
-          <div class="bar bar-inline"><span id="w-mem-bar"></span></div>
-        </div>
-        <div class="seg seg-storage" data-tauri-drag-region>
-          <span class="lbl">DISK</span>
-          <span class="val" id="w-disk">–</span>
-        </div>
-        <div class="seg seg-net" data-tauri-drag-region>
-          <span class="rx" id="w-rx">↓ –</span>
-          <span class="tx" id="w-tx">↑ –</span>
-        </div>
-      </div>
+      <div class="widget-stack" id="widget-stack"></div>
     </div>`;
 
-  const $ = (id: string) => document.getElementById(id)!;
-  const wrap = $("widget-wrap");
-  const strip = $("widget-strip");
+  const wrap = document.getElementById("widget-wrap")!;
+  const stack = document.getElementById("widget-stack")!;
   const win = getCurrentWindow();
+  const knownSources = new Set<string>();
+
+  function syncNameColumnWidth(labels: string[]) {
+    const cols = Math.min(
+      ALIAS_MAX_LEN,
+      Math.max(1, ...labels.map((l) => l.length)),
+    );
+    stack.style.setProperty("--name-cols", String(cols));
+  }
+
+  function measureStackHeight(): number {
+    const strips = stack.querySelectorAll(".widget-strip");
+    if (strips.length === 0) return 0;
+    const measured = Math.ceil(stack.getBoundingClientRect().height);
+    if (measured > 0) return measured;
+    // Fallback when the window is hidden and layout reports 0.
+    const rowH = 34;
+    const gap = 4;
+    return strips.length * rowH + Math.max(0, strips.length - 1) * gap;
+  }
 
   function fitWindow() {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const w = Math.ceil(strip.scrollWidth + 8);
-        const h = Math.ceil(strip.offsetHeight + 4);
+        const w = Math.ceil(wrap.scrollWidth + 8);
+        const h = Math.ceil(measureStackHeight() + 4);
         if (w > 0 && h > 0) {
           win.setSize(new LogicalSize(w, h)).catch(() => {});
         }
@@ -375,45 +874,108 @@ function renderWidget(root: HTMLElement) {
     });
   }
 
-  function update(s: Snapshot) {
-    lastUpdate = Date.now();
-    $("w-host").textContent = s.hostname;
-    $("w-users").textContent = fmtUsers(s.active_users ?? 0);
+  function rebuildStack(sources: { source: string; label: string }[]) {
+    const displayLabels = sources.map((s) => widgetDisplayLabel(s.source, s.label));
+    syncNameColumnWidth(displayLabels);
+    stack.innerHTML = sources
+      .map((s) => widgetStripHtml(s.source, widgetDisplayLabel(s.source, s.label)))
+      .join("");
+    knownSources.clear();
+    for (const s of sources) knownSources.add(s.source);
+    for (const [source, snap] of snapshotsBySource) {
+      if (knownSources.has(source)) updateRow(source, snap);
+    }
+    fitWindow();
+  }
+
+  async function refreshSources() {
+    const servers = await listServers().catch(() => [] as ServerEntry[]);
+    const sources = [
+      { source: "local", label: "Local" },
+      ...servers.map((s) => ({ source: s.alias, label: s.alias })),
+    ];
+    rebuildStack(sources);
+  }
+
+  function updateRow(source: string, s: Snapshot) {
+    const strip = stack.querySelector<HTMLElement>(`.widget-strip[data-source="${CSS.escape(source)}"]`);
+    if (!strip) return;
+    const hostEl = strip.querySelector(".w-host") as HTMLElement;
+    const label = widgetDisplayLabel(source, source);
+    hostEl.textContent = label;
+    hostEl.title = source === "local" ? s.hostname : `${source} — ${s.hostname}`;
     const cpu = Math.round(s.cpu_usage);
-    $("w-cpu").textContent = `${cpu}%`;
-    ($("w-cpu-bar") as HTMLElement).style.width = `${cpu}%`;
-    setSegmentUsage($("w-cpu").closest(".seg")!, s.cpu_usage);
+    strip.querySelector(".w-cpu")!.textContent = `${cpu}%`;
+    (strip.querySelector(".w-cpu-bar") as HTMLElement).style.width = `${cpu}%`;
+    setSegmentUsage(strip.querySelector(".w-cpu")!.closest(".seg")! as HTMLElement, s.cpu_usage);
     const memPct = s.mem_total ? (s.mem_used / s.mem_total) * 100 : 0;
-    $("w-mem").textContent = `${Math.round(memPct)}%`;
-    ($("w-mem-bar") as HTMLElement).style.width = `${memPct}%`;
-    setSegmentUsage($("w-mem").closest(".seg")!, memPct);
-    $("w-rx").textContent = `↓ ${fmtRate(s.net_rx_bps)}`;
-    $("w-tx").textContent = `↑ ${fmtRate(s.net_tx_bps)}`;
+    strip.querySelector(".w-mem")!.textContent = `${Math.round(memPct)}%`;
+    (strip.querySelector(".w-mem-bar") as HTMLElement).style.width = `${memPct}%`;
+    setSegmentUsage(strip.querySelector(".w-mem")!.closest(".seg")! as HTMLElement, memPct);
+    strip.querySelector(".w-rx")!.textContent = `↓ ${fmtRate(s.net_rx_bps)}`;
+    strip.querySelector(".w-tx")!.textContent = `↑ ${fmtRate(s.net_tx_bps)}`;
     const disk = primaryDisk(s.disks);
-    const diskEl = $("w-disk");
+    const diskEl = strip.querySelector(".w-disk")!;
     const diskSeg = diskEl.closest(".seg")!;
     if (disk && disk.total > 0) {
       const used = disk.total - disk.available;
       const diskPct = diskUsedPct(disk.total, disk.available);
       diskEl.textContent = fmtDiskUsage(used, disk.total);
-      setSegmentUsage(diskSeg, diskPct);
+      setSegmentUsage(diskSeg as HTMLElement, diskPct);
     } else {
       diskEl.textContent = "–";
-      diskSeg.classList.remove("usage-ok", "usage-warn", "usage-err");
+      diskSeg?.classList.remove("usage-ok", "usage-warn", "usage-err");
     }
     fitWindow();
   }
 
-  listen<Snapshot>("metrics", (e) => update(e.payload));
+  function onMetrics(s: Snapshot) {
+    snapshotsBySource.set(s.source, s);
+    lastUpdateBySource.set(s.source, Date.now());
+    if (!knownSources.has(s.source)) {
+      refreshSources().catch(() => {});
+      return;
+    }
+    updateRow(s.source, s);
+  }
+
+  listen<Snapshot>("metrics", (e) => onMetrics(e.payload));
+
+  listen("servers-changed", () => {
+    refreshSources().catch(() => {});
+  });
+
+  listen("widget-shown", () => {
+    refreshSources()
+      .catch(() => {})
+      .finally(() => fitWindow());
+  });
+
+  win.onFocusChanged(({ payload: focused }) => {
+    if (focused) {
+      refreshSources()
+        .catch(() => {})
+        .finally(() => fitWindow());
+    }
+  });
 
   setInterval(() => {
-    const stale = isStale(lastUpdate, Date.now());
-    $("w-dot").className = "dot" + (stale ? " err" : "");
-    strip.classList.toggle("stale", stale);
+    const now = Date.now();
+    stack.querySelectorAll<HTMLElement>(".widget-strip").forEach((strip) => {
+      const source = strip.getAttribute("data-source") ?? "";
+      const ts = lastUpdateBySource.get(source) ?? 0;
+      const connecting = ts === 0;
+      const stale = ts > 0 && isStale(ts, now);
+      const dot = strip.querySelector(".w-dot");
+      if (dot) dot.className = "dot w-dot" + (stale ? " err" : connecting ? " warn" : "");
+      // connecting (never received) = yellow tint; lost (was live, now stale) = red tint.
+      strip.classList.toggle("connecting", connecting);
+      strip.classList.toggle("stale", stale);
+    });
     fitWindow();
   }, 1000);
 
-  fitWindow();
+  refreshSources().catch(() => {});
 }
 
 // ---------- bootstrap ----------
