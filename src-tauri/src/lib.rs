@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::{NewServer, ServerEntry};
-use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
+#[cfg(target_os = "macos")]
+use tauri::RunEvent;
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 
 #[derive(Clone, serde::Serialize)]
 struct SourceStatus {
@@ -197,9 +199,9 @@ fn toggle_widget(app: AppHandle) -> Result<bool, String> {
     }
 }
 
-/// Show and focus the main dashboard (e.g. after closing it while the widget stays open).
-#[tauri::command]
-fn show_main_window(app: AppHandle) -> Result<(), String> {
+/// Show and focus the main dashboard. Used by widget double-click (all platforms)
+/// and by the macOS dock handler below.
+fn focus_main_window(app: &AppHandle) -> Result<(), String> {
     let win = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
@@ -207,6 +209,12 @@ fn show_main_window(app: AppHandle) -> Result<(), String> {
     let _ = win.unminimize();
     win.set_focus().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Show and focus the main dashboard (e.g. after closing it while the widget stays open).
+#[tauri::command]
+fn show_main_window(app: AppHandle) -> Result<(), String> {
+    focus_main_window(&app)
 }
 
 fn run_server_poller(app: AppHandle, entry: ServerEntry, stop: Arc<AtomicBool>) {
@@ -309,12 +317,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app_handle, event| {
-            // macOS: clicking the dock icon when no window is visible reopens main.
-            if let RunEvent::Reopen { .. } = event {
-                if let Some(win) = app_handle.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.unminimize();
-                    let _ = win.set_focus();
+            #[cfg(target_os = "macos")]
+            {
+                // Dock icon click when main is hidden (Windows restores via taskbar instead).
+                if let RunEvent::Reopen { .. } = event {
+                    let _ = focus_main_window(&app_handle);
                 }
             }
         });

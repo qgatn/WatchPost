@@ -1,6 +1,6 @@
 # Releasing WatchPost
 
-WatchPost ships installers for **macOS**, **Windows**, and **Linux** via GitHub Releases. Builds run on GitHub's servers — you do not need a Windows machine locally.
+WatchPost ships installers for **macOS** and **Windows** via GitHub Releases. Builds run on GitHub's servers — you do not need a Windows machine locally.
 
 ## One-time setup
 
@@ -42,7 +42,7 @@ See [Tauri — Windows Code Signing](https://v2.tauri.app/distribute/sign/window
    git push origin v0.1.0
    ```
 
-4. **Watch the workflow:** GitHub → **Actions** → **Release**. Four jobs run in parallel (macOS arm64, macOS x64, Windows, Linux).
+4. **Watch the workflow:** GitHub → **Actions** → **Release**. Three jobs run in parallel (macOS arm64, macOS x64, Windows).
 
 5. **Publish the draft:** When all jobs finish, open **Releases** → the new **draft** release → review attached files → **Publish release**.
 
@@ -53,7 +53,6 @@ See [Tauri — Windows Code Signing](https://v2.tauri.app/distribute/sign/window
 | macOS (Apple Silicon) | `.dmg` with `aarch64` in the name |
 | macOS (Intel) | `.dmg` with `x64` in the name |
 | Windows | `.msi` and/or `.exe` (NSIS) |
-| Linux | `.deb`, `.AppImage`, or `.rpm` |
 
 ## Unsigned builds (default)
 

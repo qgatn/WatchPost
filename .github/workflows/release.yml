@@ -1,6 +1,6 @@
 name: Release
 
-# Build installers for macOS (Apple Silicon + Intel), Windows, and Linux,
+# Build installers for macOS (Apple Silicon + Intel) and Windows,
 # then publish them to a GitHub Release. Triggered when you push a version tag.
 #
 #   git tag v0.1.0
@@ -36,9 +36,6 @@ jobs:
           - platform: windows-latest
             args: ""
             rust-target: ""
-          - platform: ubuntu-22.04
-            args: ""
-            rust-target: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -61,16 +58,6 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
-
       - name: Install frontend dependencies
         run: npm ci
 
@@ -86,7 +73,6 @@ jobs:
 
             **macOS:** open the `.dmg`, drag WatchPost to Applications. If Gatekeeper blocks it, right-click → Open.
             **Windows:** run the `.msi` or `.exe`; click through SmartScreen if prompted.
-            **Linux:** use the `.deb`, `.AppImage`, or `.rpm` for your distro.
 
             See [RELEASE.md](https://github.com/${{ github.repository }}/blob/main/wiki/RELEASE.md) for details.
           releaseDraft: true
