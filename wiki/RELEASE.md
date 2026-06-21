@@ -22,6 +22,14 @@ See [Tauri — Windows Code Signing](https://v2.tauri.app/distribute/sign/window
 
 ## Cut a release
 
+0. **Verify locally** (catches most CI failures before you push a tag):
+
+   ```bash
+   npm run release:check
+   ```
+
+   This runs tests, `npm run build`, and a full `tauri build` for your current OS.
+
 1. **Bump the version** in `src-tauri/tauri.conf.json` and `package.json` (keep them in sync).
 
 2. **Commit** the version bump on `main`.

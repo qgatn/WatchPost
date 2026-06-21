@@ -60,6 +60,7 @@ The first launch compiles Rust dependencies and may take a few minutes.
 | `npm run start` | Run in development mode |
 | `npm test` | Run test suite |
 | `npm run package` | Build release installer for the current OS |
+| `npm run release:check` | Tests + production build + package (run before pushing a tag) |
 | `npm run icons` | Regenerate all app icons from `app-icon.png` |
 
 ## App icon

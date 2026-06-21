@@ -11,6 +11,7 @@
     "setup": "node scripts/setup.mjs",
     "start": "tauri dev",
     "package": "tauri build",
+    "release:check": "bash scripts/release-check.sh",
     "icons": "python3 scripts/make_icon.py && tauri icon app-icon.png",
     "test": "npm run test:frontend && npm run test:rust",
     "test:frontend": "vitest run",
