@@ -1,11 +1,11 @@
 :root {
-  --bg: #0f1419;
-  --panel: #161c24;
-  --panel-2: #1d2530;
-  --text: #e6edf3;
-  --muted: #8b98a5;
-  --accent: #4fd1c5;
-  --cpu: #4fd1c5;
+  --bg: #0d0d0d;
+  --panel: #161616;
+  --panel-2: #232323;
+  --text: #e9edf0;
+  --muted: #8a8a8a;
+  --accent: #d8dee4;
+  --cpu: #d8dee4;
   --mem: #f6ad55;
   --net-rx: #63b3ed;
   --net-tx: #b794f4;
@@ -31,7 +31,7 @@ body {
 /* Widget mode: transparent window hugs content */
 body.widget-mode {
   background: transparent;
-  overflow: hidden;
+  overflow: visible;
   user-select: none;
   margin: 0;
   width: fit-content;
@@ -49,13 +49,21 @@ body.widget-mode {
   overflow: visible;
 }
 
+.widget-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: fit-content;
+  --name-cols: 5;
+}
+
 .widget-strip {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: fit-content;
-  padding: 8px 18px 8px 12px;
-  background: rgba(15, 20, 25, 0.88);
+  padding: 7px 10px 7px 10px;
+  background: rgba(18, 18, 18, 0.9);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   border: none;
@@ -69,8 +77,15 @@ body.widget-mode {
   cursor: grabbing;
 }
 
+/* Connecting (no data yet) = yellow tint; connection lost (stale) = red tint. */
+.widget-strip.connecting {
+  background: rgba(236, 201, 75, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(236, 201, 75, 0.45);
+}
+
 .widget-strip.stale {
-  box-shadow: inset 0 -2px 0 var(--err);
+  background: rgba(245, 101, 101, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(245, 101, 101, 0.5);
 }
 
 .widget-strip .seg {
@@ -82,23 +97,19 @@ body.widget-mode {
 
 .widget-strip .seg-host {
   gap: 6px;
-  max-width: 120px;
+  flex-shrink: 0;
 }
 
 .widget-strip .seg-host .name {
   font-weight: 600;
   font-size: 11px;
+  flex: 0 0 calc(var(--name-cols) * 1ch);
+  width: calc(var(--name-cols) * 1ch);
+  min-width: calc(var(--name-cols) * 1ch);
+  max-width: calc(var(--name-cols) * 1ch);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.widget-strip .seg-users {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  padding: 0 4px;
-  border-left: 1px solid #ffffff18;
-  border-right: 1px solid #ffffff18;
 }
 
 .widget-strip .seg-metric {
@@ -137,6 +148,32 @@ body.widget-mode {
   color: var(--err);
 }
 
+/* Per-segment highlight: only when elevated/high, so healthy stays clean. */
+.widget-strip .seg-metric.usage-warn,
+.widget-strip .seg-storage.usage-warn {
+  background: rgba(236, 201, 75, 0.18);
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin: -2px 0;
+}
+
+.widget-strip .seg-metric.usage-err,
+.widget-strip .seg-storage.usage-err {
+  background: rgba(245, 101, 101, 0.2);
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin: -2px 0;
+}
+
+/* On a tinted (connecting/lost) row the values are stale — drop the per-segment
+   highlight so the whole-row tint reads cleanly. */
+.widget-strip.connecting .seg-metric,
+.widget-strip.connecting .seg-storage,
+.widget-strip.stale .seg-metric,
+.widget-strip.stale .seg-storage {
+  background: transparent;
+}
+
 .widget-strip .bar-inline {
   width: 48px;
   height: 5px;
@@ -166,11 +203,10 @@ body.widget-mode {
 }
 
 .widget-strip .seg-net {
-  gap: 8px;
+  gap: 3px;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
-  padding: 0 2px 0 8px;
-  margin-right: 2px;
+  padding: 0 0 0 6px;
   border-left: 1px solid #ffffff18;
   white-space: nowrap;
 }
@@ -178,7 +214,6 @@ body.widget-mode {
 .widget-strip .seg-net .rx,
 .widget-strip .seg-net .tx {
   display: inline-block;
-  min-width: 76px;
   white-space: nowrap;
 }
 
@@ -201,9 +236,282 @@ body.widget-mode {
   border-bottom: 1px solid #0008;
 }
 
-.brand { display: flex; align-items: baseline; gap: 8px; }
+.brand { display: flex; align-items: center; gap: 8px; }
+.brand-logo {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  background-color: var(--accent);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
 .brand h1 { font-size: 13px; margin: 0; letter-spacing: 0.4px; }
-.brand .host { font-size: 11px; color: var(--muted); }
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.source-select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid #fff1;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: #ffffff22;
+}
+
+.hidden { display: none !important; }
+
+/* ---------- Add-server modal ---------- */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: #0009;
+}
+
+.modal-panel {
+  position: relative;
+  width: min(480px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid #ffffff18;
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: 0 12px 40px #0008;
+}
+
+.modal-panel h2 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.modal-steps {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.step-pill {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+.step-pill.active {
+  background: #2a2a2a;
+  color: var(--accent);
+}
+
+.modal-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.modal-body input {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid #fff1;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.field-hint {
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.modal-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 10px;
+  line-height: 1.4;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #ffffff12;
+}
+
+.tab-row {
+  display: flex;
+  gap: 4px;
+  margin: 10px 0 8px;
+}
+
+.tab {
+  background: var(--panel-2);
+  border-color: transparent;
+}
+
+.tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #2a2a2a;
+}
+
+.cmd-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cmd-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cmd-why {
+  margin: 0;
+  padding-left: 94px;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.cmd-why-optional {
+  color: var(--ok);
+}
+
+.cmd-row {
+  display: grid;
+  grid-template-columns: 88px 1fr auto;
+  gap: 6px;
+  align-items: start;
+}
+
+.cmd-lbl {
+  font-size: 10px;
+  color: var(--muted);
+  padding-top: 6px;
+}
+
+.cmd-row pre {
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border-radius: 6px;
+  font-size: 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.35;
+}
+
+.setup-key-line {
+  margin: 0 0 8px;
+  padding: 8px;
+  background: var(--panel-2);
+  border-radius: 6px;
+  font-size: 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.test-result {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 10px;
+}
+
+.test-result.ok { color: var(--ok); }
+.test-result.err { color: var(--err); }
+
+/* ---------- Diagnostics panel (connection log) ---------- */
+.diag-panel {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(360px, calc(100vh - 80px));
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid #ffffff22;
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px #000a;
+  padding: 12px;
+}
+
+.diag-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.diag-header h2 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.diag-hint {
+  margin: 0 0 8px;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.diag-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.diag-log {
+  flex: 1;
+  min-height: 120px;
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  background: var(--panel-2);
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+#test-diag-btn {
+  margin-left: 8px;
+}
 
 .status-pill {
   display: inline-flex;
@@ -226,7 +534,7 @@ button {
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
-button:hover { background: #2a3340; border-color: var(--accent); }
+button:hover { background: #2a2a2a; border-color: var(--accent); }
 
 .grid {
   display: grid;
@@ -265,6 +573,22 @@ button:hover { background: #2a3340; border-color: var(--accent); }
 }
 .big { font-size: 20px; font-weight: 600; line-height: 1.1; }
 .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.card-cpu {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.card-cpu .spark {
+  flex: 0 0 32px;
+}
+
+.card-cpu .big,
+.card-cpu .cores-meta {
+  flex: 0 0 auto;
+}
 
 .card-section {
   display: flex;
@@ -343,20 +667,75 @@ button:hover { background: #2a3340; border-color: var(--accent); }
   margin-bottom: 4px;
 }
 
-.net-bar-row {
+.net-summary {
   display: grid;
-  grid-template-columns: 32px 1fr auto;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  margin-bottom: 4px;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 6px;
 }
 
-.net-bar-row .val {
+.net-stat {
   font-variant-numeric: tabular-nums;
-  min-width: 64px;
-  text-align: right;
+  font-weight: 500;
+}
+
+.net-stat.rx { justify-self: start; }
+.net-stat.total {
+  justify-self: center;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.net-stat.tx { justify-self: end; }
+
+.net-dir {
+  color: var(--muted);
   font-size: 10px;
+  margin-right: 2px;
+}
+
+.net-stat.rx { color: var(--net-rx); }
+.net-stat.tx { color: var(--net-tx); }
+
+.card-net .spark {
+  height: 44px;
+  margin-top: 2px;
+}
+
+.net-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.net-stats span:last-child {
+  text-align: right;
+}
+
+.net-stats #net-avg,
+.net-stats #net-peak {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.net-status {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 4px;
+  text-align: center;
+}
+
+#disk-rows .bar-row + .bar-row {
+  margin-top: 6px;
+}
+
+.disk-empty {
+  margin: 0;
 }
 
 .bar-sm { margin-top: 0; height: 5px; }
@@ -384,6 +763,9 @@ button:hover { background: #2a3340; border-color: var(--accent); }
 
 .cores-scroll {
   margin-top: 4px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
@@ -391,17 +773,18 @@ button:hover { background: #2a3340; border-color: var(--accent); }
 }
 
 .cores {
-  display: flex;
-  flex-wrap: nowrap;
+  display: grid;
   gap: 2px;
-  min-width: min-content;
-  height: 20px;
+  width: 100%;
+  min-height: 72px;
+  height: 100%;
+  flex: 1;
+  align-items: end;
 }
 
 .core {
-  flex: 0 0 4px;
-  width: 4px;
-  height: 20px;
+  min-width: 0;
+  height: 100%;
   background: var(--panel-2);
   border-radius: 2px;
   position: relative;
@@ -415,25 +798,6 @@ button:hover { background: #2a3340; border-color: var(--accent); }
   transition: height 0.3s ease;
 }
 
-.session-stat {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: 11px;
-  gap: 8px;
-}
-
-.session-lbl { color: var(--muted); }
-
-.session-val {
-  font-variant-numeric: tabular-nums;
-  font-weight: 500;
-}
-
 canvas.spark { width: 100%; height: 32px; display: block; margin-top: 4px; }
-
-.net-line { display: flex; justify-content: space-between; font-size: 13px; margin-top: 4px; }
-.net-line .rx { color: var(--net-rx); }
-.net-line .tx { color: var(--net-tx); }
 
 #app { height: 100%; }

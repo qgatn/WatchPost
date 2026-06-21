@@ -26,4 +26,13 @@ describe("History", () => {
     h.push(42);
     expect(h.max()).toBe(42);
   });
+
+  it("avg returns mean of buffered values", () => {
+    const h = new History(5);
+    expect(h.avg()).toBe(0);
+    h.push(10);
+    h.push(20);
+    h.push(30);
+    expect(h.avg()).toBe(20);
+  });
 });

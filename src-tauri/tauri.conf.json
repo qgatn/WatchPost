@@ -27,7 +27,7 @@
         "title": "WatchPost Widget",
         "url": "index.html",
         "width": 480,
-        "height": 48,
+        "height": 120,
         "decorations": false,
         "transparent": true,
         "alwaysOnBottom": true,
