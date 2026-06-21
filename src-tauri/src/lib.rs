@@ -9,10 +9,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use store::{NewServer, ServerEntry};
-#[cfg(target_os = "macos")]
+use store::{NewServer, ServerEntry, StackMode, WidgetPrefs};
 use tauri::RunEvent;
-use tauri::{AppHandle, Emitter, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow, WindowEvent};
+
+static HIDING_MAIN: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, serde::Serialize)]
 struct SourceStatus {
@@ -93,6 +94,49 @@ fn data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     app.path()
         .app_data_dir()
         .map_err(|e| e.to_string())
+}
+
+fn any_window_visible(app: &AppHandle) -> bool {
+    ["main", "widget"].iter().any(|label| {
+        app.get_webview_window(label)
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false)
+    })
+}
+
+fn on_window_hidden(app: &AppHandle) {
+    if !any_window_visible(app) {
+        app.exit(0);
+    }
+}
+
+fn apply_widget_stack_mode(win: &WebviewWindow, mode: StackMode) -> Result<(), String> {
+    match mode {
+        StackMode::Behind => {
+            win.set_always_on_top(false).map_err(|e| e.to_string())?;
+            win.set_always_on_bottom(true).map_err(|e| e.to_string())?;
+        }
+        StackMode::Normal => {
+            win.set_always_on_top(false).map_err(|e| e.to_string())?;
+            win.set_always_on_bottom(false).map_err(|e| e.to_string())?;
+        }
+        StackMode::OnTop => {
+            win.set_always_on_bottom(false).map_err(|e| e.to_string())?;
+            win.set_always_on_top(true).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn apply_widget_prefs_to_window(app: &AppHandle) -> Result<(), String> {
+    let win = app
+        .get_webview_window("widget")
+        .ok_or_else(|| "widget window not found".to_string())?;
+    if !win.is_visible().map_err(|e| e.to_string())? {
+        return Ok(());
+    }
+    let prefs = store::load_widget_prefs(data_dir(app)?)?;
+    apply_widget_stack_mode(&win, prefs.stack_mode)
 }
 
 #[derive(Serialize)]
@@ -180,7 +224,53 @@ fn get_ssh_setup_info() -> SshSetupInfo {
     }
 }
 
-/// Toggle the desktop widget window (stays below other windows).
+#[tauri::command]
+fn get_widget_prefs(app: AppHandle) -> Result<WidgetPrefs, String> {
+    store::load_widget_prefs(data_dir(&app)?)
+}
+
+#[tauri::command]
+fn set_widget_prefs(app: AppHandle, prefs: WidgetPrefs) -> Result<(), String> {
+    store::save_widget_prefs(data_dir(&app)?, &prefs)?;
+    apply_widget_prefs_to_window(&app)?;
+    let _ = app.emit("widget-prefs-changed", &prefs);
+    Ok(())
+}
+
+fn hide_widget_window(app: &AppHandle) -> Result<(), String> {
+    let win = app
+        .get_webview_window("widget")
+        .ok_or_else(|| "widget window not found".to_string())?;
+    if win.is_visible().map_err(|e| e.to_string())? {
+        win.hide().map_err(|e| e.to_string())?;
+        let _ = app.emit("widget-hidden", ());
+        on_window_hidden(app);
+    }
+    Ok(())
+}
+
+/// Hide the widget window (no-op if already hidden).
+#[tauri::command]
+fn hide_widget(app: AppHandle) -> Result<(), String> {
+    hide_widget_window(&app)
+}
+
+/// Whether the main dashboard window is currently visible.
+#[tauri::command]
+fn is_main_visible(app: AppHandle) -> Result<bool, String> {
+    app.get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?
+        .is_visible()
+        .map_err(|e| e.to_string())
+}
+
+/// Exit the application.
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+/// Toggle the desktop widget window show/hide.
 #[tauri::command]
 fn toggle_widget(app: AppHandle) -> Result<bool, String> {
     let win = app
@@ -188,11 +278,11 @@ fn toggle_widget(app: AppHandle) -> Result<bool, String> {
         .ok_or_else(|| "widget window not found".to_string())?;
     let visible = win.is_visible().map_err(|e| e.to_string())?;
     if visible {
-        win.hide().map_err(|e| e.to_string())?;
+        hide_widget_window(&app)?;
         Ok(false)
     } else {
-        win.set_always_on_top(false).map_err(|e| e.to_string())?;
-        win.set_always_on_bottom(true).map_err(|e| e.to_string())?;
+        let prefs = store::load_widget_prefs(data_dir(&app)?)?;
+        apply_widget_stack_mode(&win, prefs.stack_mode)?;
         win.show().map_err(|e| e.to_string())?;
         let _ = app.emit("widget-shown", ());
         Ok(true)
@@ -290,6 +380,9 @@ pub fn run() {
         .manage(PollerRegistry::new())
         .invoke_handler(tauri::generate_handler![
             toggle_widget,
+            hide_widget,
+            quit_app,
+            is_main_visible,
             show_main_window,
             list_servers,
             add_server,
@@ -297,6 +390,8 @@ pub fn run() {
             test_server,
             diagnose_server,
             get_ssh_setup_info,
+            get_widget_prefs,
+            set_widget_prefs,
         ])
         .on_window_event(|window, event| {
             if window.label() != "main" {
@@ -305,7 +400,9 @@ pub fn run() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 // Hide instead of destroy so the widget can reopen the dashboard.
                 api.prevent_close();
+                HIDING_MAIN.store(true, Ordering::SeqCst);
                 let _ = window.hide();
+                on_window_hidden(window.app_handle());
             }
         })
         .setup(|app| {
@@ -317,6 +414,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app_handle, event| {
+            if let RunEvent::ExitRequested { api, .. } = &event {
+                // macOS may emit ExitRequested when main is hidden via ✕; keep running if widget is up.
+                if HIDING_MAIN.swap(false, Ordering::SeqCst) && any_window_visible(&app_handle) {
+                    api.prevent_exit();
+                }
+            }
             #[cfg(target_os = "macos")]
             {
                 // Dock icon click when main is hidden (Windows restores via taskbar instead).

@@ -33,6 +33,23 @@ import {
   type SshSetupInfo,
 } from "./servers";
 import { isStale } from "./status";
+import {
+  canDisableSegment,
+  cloneWidgetPrefs,
+  countEnabledMetrics,
+  DEFAULT_WIDGET_PREFS,
+  DISPLAY_SEGMENT_KEYS,
+  DISPLAY_SEGMENT_LABELS,
+  getWidgetPrefs,
+  setWidgetPrefs,
+  stackModeHint,
+  type DisplaySegmentKey,
+  type MetricDisplay,
+  type MetricSegmentKey,
+  type StackMode,
+  type WidgetPrefs,
+} from "./widgetPrefs";
+import { widgetDisplayLabel, widgetStripHtml } from "./widgetStrip";
 
 interface DiskInfo {
   name: string;
@@ -225,6 +242,7 @@ function renderMain(root: HTMLElement) {
           <span class="status-pill"><span class="dot" id="status-dot"></span><span id="status-text">live</span></span>
           <button type="button" id="add-server-btn" class="btn-ghost">+ Add server</button>
           <button type="button" id="diag-btn" class="btn-ghost hidden">Diagnostics</button>
+          <button type="button" id="widget-settings-btn" class="btn-ghost btn-icon" title="Widget settings" aria-label="Widget settings">⚙</button>
           <button type="button" id="widget-btn">Open Widget</button>
         </div>
       </div>
@@ -239,6 +257,55 @@ function renderMain(root: HTMLElement) {
           <button type="button" id="diag-copy" class="btn-ghost">Copy log</button>
         </div>
         <pre class="diag-log" id="diag-log"></pre>
+      </div>
+      <div id="widget-settings-modal" class="modal hidden" aria-hidden="true">
+        <div class="modal-backdrop" data-close-widget-settings></div>
+        <div class="modal-panel widget-settings-panel" role="dialog" aria-labelledby="widget-settings-title">
+          <div class="modal-panel-header">
+            <h2 id="widget-settings-title">Widget settings</h2>
+          </div>
+          <div class="modal-panel-scroll">
+          <div class="settings-section">
+            <h3>Widget position</h3>
+            <div class="seg-control" id="stack-mode-control" role="radiogroup" aria-label="Widget position">
+              <button type="button" class="seg-opt" data-stack="behind">Behind</button>
+              <button type="button" class="seg-opt" data-stack="normal">Normal</button>
+              <button type="button" class="seg-opt" data-stack="on_top">On top</button>
+            </div>
+            <p class="modal-hint" id="stack-mode-hint"></p>
+          </div>
+          <div class="settings-section">
+            <h3>Show on widget</h3>
+            <div class="checkbox-grid" id="segment-toggles">
+              <label><input type="checkbox" data-seg="cpu" /> CPU</label>
+              <label><input type="checkbox" data-seg="mem" /> Memory</label>
+              <label><input type="checkbox" data-seg="disk" /> Disk</label>
+              <label><input type="checkbox" data-seg="net" /> Network</label>
+              <label><input type="checkbox" data-seg="users" /> Users</label>
+            </div>
+          </div>
+          <div class="settings-section">
+            <h3>Metric style</h3>
+            <p class="modal-hint">CPU and memory show as percent (e.g. 14%). Storage can show used/total, a bar, or both.</p>
+            <div class="display-style-list" id="display-style-list">
+              ${DISPLAY_SEGMENT_KEYS.map(
+                (key) => `
+              <div class="display-style-row" data-display-row="${key}">
+                <span class="display-style-label">${DISPLAY_SEGMENT_LABELS[key]}</span>
+                <div class="seg-control seg-control-compact" role="radiogroup" aria-label="${DISPLAY_SEGMENT_LABELS[key]} display">
+                  <button type="button" class="seg-opt" data-display="${key}" data-mode="number">Number</button>
+                  <button type="button" class="seg-opt" data-display="${key}" data-mode="bar">Bar</button>
+                  <button type="button" class="seg-opt" data-display="${key}" data-mode="both">Both</button>
+                </div>
+              </div>`,
+              ).join("")}
+            </div>
+          </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" id="widget-settings-done">Done</button>
+          </div>
+        </div>
       </div>
       <div id="add-server-modal" class="modal hidden" aria-hidden="true">
         <div class="modal-backdrop" data-close-modal></div>
@@ -382,6 +449,7 @@ function renderMain(root: HTMLElement) {
   let savedServers: ServerEntry[] = [];
   let diskSectionKey = "";
   let diagLogLines: string[] = [];
+  let widgetPrefs: WidgetPrefs = cloneWidgetPrefs(DEFAULT_WIDGET_PREFS);
 
   function appendDiag(line: string) {
     diagLogLines.push(line);
@@ -515,6 +583,47 @@ function renderMain(root: HTMLElement) {
     modal.setAttribute("aria-hidden", "true");
   }
 
+  function syncWidgetSettingsUi() {
+    document.querySelectorAll<HTMLButtonElement>("#stack-mode-control .seg-opt").forEach((btn) => {
+      const mode = btn.getAttribute("data-stack") as StackMode;
+      btn.classList.toggle("active", mode === widgetPrefs.stack_mode);
+      btn.setAttribute("aria-checked", mode === widgetPrefs.stack_mode ? "true" : "false");
+    });
+    $("stack-mode-hint").textContent = stackModeHint(widgetPrefs.stack_mode);
+    document.querySelectorAll<HTMLInputElement>("#segment-toggles input[data-seg]").forEach((input) => {
+      const key = input.getAttribute("data-seg") as MetricSegmentKey;
+      input.checked = widgetPrefs.segments[key];
+      input.disabled = !canDisableSegment(widgetPrefs.segments, key);
+    });
+    document.querySelectorAll<HTMLButtonElement>("[data-display][data-mode]").forEach((btn) => {
+      const key = btn.getAttribute("data-display") as DisplaySegmentKey;
+      const mode = btn.getAttribute("data-mode") as MetricDisplay;
+      btn.classList.toggle("active", widgetPrefs.display[key] === mode);
+      btn.setAttribute("aria-checked", widgetPrefs.display[key] === mode ? "true" : "false");
+    });
+    document.querySelectorAll<HTMLElement>("[data-display-row]").forEach((row) => {
+      const key = row.getAttribute("data-display-row") as DisplaySegmentKey;
+      row.classList.toggle("disabled", !widgetPrefs.segments[key]);
+    });
+  }
+
+  function openWidgetSettings() {
+    syncWidgetSettingsUi();
+    const modal = $("widget-settings-modal");
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+  }
+
+  function closeWidgetSettings() {
+    const modal = $("widget-settings-modal");
+    modal.classList.add("hidden");
+    modal.setAttribute("aria-hidden", "true");
+  }
+
+  async function applyWidgetPrefs(prefs: WidgetPrefs) {
+    await setWidgetPrefs(prefs);
+  }
+
   function fillSetupCommands() {
     const form = readForm();
     if (!form) return;
@@ -641,10 +750,66 @@ function renderMain(root: HTMLElement) {
     );
   }
 
+  function syncWidgetButton(visible: boolean) {
+    $("widget-btn").textContent = visible ? "Hide Widget" : "Open Widget";
+  }
+
   $("widget-btn").addEventListener("click", async () => {
     const visible = await invoke<boolean>("toggle_widget");
-    $("widget-btn").textContent = visible ? "Hide Widget" : "Open Widget";
+    syncWidgetButton(visible);
   });
+
+  listen("widget-shown", () => syncWidgetButton(true));
+  listen("widget-hidden", () => syncWidgetButton(false));
+
+  $("widget-settings-btn").addEventListener("click", () => openWidgetSettings());
+  $("widget-settings-done").addEventListener("click", () => closeWidgetSettings());
+  document.querySelectorAll("[data-close-widget-settings]").forEach((el) => {
+    el.addEventListener("click", () => closeWidgetSettings());
+  });
+
+  document.querySelectorAll("#stack-mode-control .seg-opt").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = btn.getAttribute("data-stack") as StackMode;
+      applyWidgetPrefs({ ...widgetPrefs, stack_mode: mode }).catch(() => {});
+    });
+  });
+
+  document.querySelectorAll<HTMLInputElement>("#segment-toggles input[data-seg]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const key = input.getAttribute("data-seg") as MetricSegmentKey;
+      const next = { ...widgetPrefs.segments, [key]: input.checked };
+      if (countEnabledMetrics(next) === 0) {
+        input.checked = widgetPrefs.segments[key];
+        return;
+      }
+      applyWidgetPrefs({ ...widgetPrefs, segments: next }).catch(() => {});
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-display][data-mode]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.getAttribute("data-display") as DisplaySegmentKey;
+      const mode = btn.getAttribute("data-mode") as MetricDisplay;
+      if (!widgetPrefs.segments[key]) return;
+      applyWidgetPrefs({
+        ...widgetPrefs,
+        display: { ...widgetPrefs.display, [key]: mode },
+      }).catch(() => {});
+    });
+  });
+
+  listen<WidgetPrefs>("widget-prefs-changed", (e) => {
+    widgetPrefs = cloneWidgetPrefs(e.payload);
+    syncWidgetSettingsUi();
+  });
+
+  getWidgetPrefs()
+    .then((prefs) => {
+      widgetPrefs = cloneWidgetPrefs(prefs);
+      syncWidgetSettingsUi();
+    })
+    .catch(() => {});
 
   $("source-select").addEventListener("change", () => {
     selectedSource = ($("source-select") as HTMLSelectElement).value;
@@ -796,38 +961,6 @@ function setSegmentUsage(seg: HTMLElement, pct: number) {
   seg.classList.add(`usage-${segmentLevel(pct)}`);
 }
 
-function widgetDisplayLabel(source: string, alias: string): string {
-  return source === "local" ? "Local" : alias;
-}
-
-function widgetStripHtml(source: string, label: string): string {
-  return `
-    <div class="widget-strip" data-source="${source}" data-tauri-drag-region title="Double-click to open dashboard">
-      <div class="seg seg-host" data-tauri-drag-region>
-        <span class="dot w-dot"></span>
-        <span class="name w-host" data-tauri-drag-region title="">${label}</span>
-      </div>
-      <div class="seg seg-metric" data-tauri-drag-region>
-        <span class="lbl">CPU</span>
-        <span class="val w-cpu">0%</span>
-        <div class="bar bar-inline"><span class="w-cpu-bar"></span></div>
-      </div>
-      <div class="seg seg-metric" data-tauri-drag-region>
-        <span class="lbl">MEM</span>
-        <span class="val w-mem">0%</span>
-        <div class="bar bar-inline"><span class="w-mem-bar"></span></div>
-      </div>
-      <div class="seg seg-storage" data-tauri-drag-region>
-        <span class="lbl">DISK</span>
-        <span class="val w-disk">–</span>
-      </div>
-      <div class="seg seg-net" data-tauri-drag-region>
-        <span class="rx w-rx">↓ –</span>
-        <span class="tx w-tx">↑ –</span>
-      </div>
-    </div>`;
-}
-
 //  WIDGET WINDOW
 // =====================================================================
 function renderWidget(root: HTMLElement) {
@@ -836,12 +969,117 @@ function renderWidget(root: HTMLElement) {
   root.innerHTML = `
     <div class="widget-wrap" id="widget-wrap">
       <div class="widget-stack" id="widget-stack"></div>
-    </div>`;
+    </div>
+    <div class="widget-context-menu hidden" id="widget-ctx-menu" role="menu" aria-hidden="true"></div>`;
 
   const wrap = document.getElementById("widget-wrap")!;
   const stack = document.getElementById("widget-stack")!;
+  const ctxMenu = document.getElementById("widget-ctx-menu")!;
   const win = getCurrentWindow();
   const knownSources = new Set<string>();
+  let widgetPrefs: WidgetPrefs = cloneWidgetPrefs(DEFAULT_WIDGET_PREFS);
+  let ctxMenuOpen = false;
+
+  function measureWindowSize(): { w: number; h: number } {
+    const stripW = Math.ceil(wrap.scrollWidth + 8);
+    const stripH = Math.ceil(measureStackHeight() + 4);
+    if (!ctxMenuOpen || ctxMenu.classList.contains("hidden")) {
+      return { w: stripW, h: stripH };
+    }
+    const menuRect = ctxMenu.getBoundingClientRect();
+    return {
+      w: Math.ceil(Math.max(stripW, menuRect.right + 8)),
+      h: Math.ceil(Math.max(stripH, menuRect.bottom + 8)),
+    };
+  }
+
+  function applyWindowSize() {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const { w, h } = measureWindowSize();
+        if (w > 0 && h > 0) {
+          win.setSize(new LogicalSize(w, h)).catch(() => {});
+        }
+      });
+    });
+  }
+
+  function hideCtxMenu() {
+    ctxMenuOpen = false;
+    ctxMenu.classList.add("hidden");
+    ctxMenu.setAttribute("aria-hidden", "true");
+    applyWindowSize();
+  }
+
+  function fillCtxMenu(mainOpen: boolean) {
+    ctxMenu.innerHTML = mainOpen
+      ? `<button type="button" data-ctx="hide" role="menuitem">Hide widget</button>
+         <button type="button" data-ctx="quit" class="danger" role="menuitem">Quit WatchPost</button>`
+      : `<button type="button" data-ctx="open" role="menuitem">Open App</button>
+         <button type="button" data-ctx="close" class="danger" role="menuitem">Close</button>`;
+  }
+
+  function positionCtxMenu(x: number, y: number) {
+    const pad = 8;
+    const w = ctxMenu.offsetWidth || 148;
+    const h = ctxMenu.offsetHeight || 64;
+    let left = x;
+    let top = y;
+    if (y + h + pad > window.innerHeight || y > window.innerHeight / 2) {
+      top = Math.max(pad, y - h);
+    }
+    left = Math.min(Math.max(pad, left), Math.max(pad, window.innerWidth - w - pad));
+    top = Math.min(Math.max(pad, top), Math.max(pad, window.innerHeight - h - pad));
+    ctxMenu.style.left = `${left}px`;
+    ctxMenu.style.top = `${top}px`;
+  }
+
+  async function showCtxMenu(x: number, y: number) {
+    const mainOpen = await invoke<boolean>("is_main_visible").catch(() => false);
+    fillCtxMenu(mainOpen);
+    ctxMenuOpen = true;
+    ctxMenu.classList.remove("hidden");
+    ctxMenu.setAttribute("aria-hidden", "false");
+    positionCtxMenu(x, y);
+    applyWindowSize();
+  }
+
+  stack.addEventListener("contextmenu", (e) => {
+    if (!(e.target as HTMLElement).closest(".widget-strip")) return;
+    e.preventDefault();
+    showCtxMenu(e.clientX, e.clientY).catch(() => {});
+  });
+
+  ctxMenu.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-ctx]");
+    if (!btn) return;
+    const action = btn.getAttribute("data-ctx");
+    hideCtxMenu();
+    switch (action) {
+      case "hide":
+        invoke("hide_widget").catch(() => {});
+        break;
+      case "quit":
+        invoke("quit_app").catch(() => {});
+        break;
+      case "open":
+        invoke("show_main_window").catch(() => {});
+        break;
+      case "close":
+        // Main is hidden — hiding the widget quits the app (M3c).
+        invoke("hide_widget").catch(() => {});
+        break;
+    }
+  });
+
+  document.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || ctxMenu.classList.contains("hidden")) return;
+    if (!ctxMenu.contains(e.target as Node)) hideCtxMenu();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hideCtxMenu();
+  });
 
   stack.addEventListener("dblclick", (e) => {
     if ((e.target as HTMLElement).closest(".widget-strip")) {
@@ -869,22 +1107,21 @@ function renderWidget(root: HTMLElement) {
   }
 
   function fitWindow() {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const w = Math.ceil(wrap.scrollWidth + 8);
-        const h = Math.ceil(measureStackHeight() + 4);
-        if (w > 0 && h > 0) {
-          win.setSize(new LogicalSize(w, h)).catch(() => {});
-        }
-      });
-    });
+    applyWindowSize();
   }
 
   function rebuildStack(sources: { source: string; label: string }[]) {
     const displayLabels = sources.map((s) => widgetDisplayLabel(s.source, s.label));
     syncNameColumnWidth(displayLabels);
     stack.innerHTML = sources
-      .map((s) => widgetStripHtml(s.source, widgetDisplayLabel(s.source, s.label)))
+      .map((s) =>
+        widgetStripHtml(
+          s.source,
+          widgetDisplayLabel(s.source, s.label),
+          widgetPrefs.segments,
+          widgetPrefs.display,
+        ),
+      )
       .join("");
     knownSources.clear();
     for (const s of sources) knownSources.add(s.source);
@@ -910,28 +1147,56 @@ function renderWidget(root: HTMLElement) {
     const label = widgetDisplayLabel(source, source);
     hostEl.textContent = label;
     hostEl.title = source === "local" ? s.hostname : `${source} — ${s.hostname}`;
-    const cpu = Math.round(s.cpu_usage);
-    strip.querySelector(".w-cpu")!.textContent = `${cpu}%`;
-    (strip.querySelector(".w-cpu-bar") as HTMLElement).style.width = `${cpu}%`;
-    setSegmentUsage(strip.querySelector(".w-cpu")!.closest(".seg")! as HTMLElement, s.cpu_usage);
-    const memPct = s.mem_total ? (s.mem_used / s.mem_total) * 100 : 0;
-    strip.querySelector(".w-mem")!.textContent = `${Math.round(memPct)}%`;
-    (strip.querySelector(".w-mem-bar") as HTMLElement).style.width = `${memPct}%`;
-    setSegmentUsage(strip.querySelector(".w-mem")!.closest(".seg")! as HTMLElement, memPct);
-    strip.querySelector(".w-rx")!.textContent = `↓ ${fmtRate(s.net_rx_bps)}`;
-    strip.querySelector(".w-tx")!.textContent = `↑ ${fmtRate(s.net_tx_bps)}`;
-    const disk = primaryDisk(s.disks);
-    const diskEl = strip.querySelector(".w-disk")!;
-    const diskSeg = diskEl.closest(".seg")!;
-    if (disk && disk.total > 0) {
-      const used = disk.total - disk.available;
-      const diskPct = diskUsedPct(disk.total, disk.available);
-      diskEl.textContent = fmtDiskUsage(used, disk.total);
-      setSegmentUsage(diskSeg as HTMLElement, diskPct);
-    } else {
-      diskEl.textContent = "–";
-      diskSeg?.classList.remove("usage-ok", "usage-warn", "usage-err");
+
+    const cpuSeg = strip.querySelector(".seg-cpu");
+    if (cpuSeg) {
+      const cpu = Math.round(s.cpu_usage);
+      const cpuEl = strip.querySelector(".w-cpu");
+      if (cpuEl) cpuEl.textContent = `${cpu}%`;
+      const cpuBar = strip.querySelector(".w-cpu-bar") as HTMLElement | null;
+      if (cpuBar) cpuBar.style.width = `${s.cpu_usage}%`;
+      setSegmentUsage(cpuSeg as HTMLElement, s.cpu_usage);
     }
+
+    const memSeg = strip.querySelector(".seg-mem");
+    if (memSeg) {
+      const memPct = s.mem_total ? (s.mem_used / s.mem_total) * 100 : 0;
+      const memEl = strip.querySelector(".w-mem");
+      if (memEl) memEl.textContent = `${Math.round(memPct)}%`;
+      const memBar = strip.querySelector(".w-mem-bar") as HTMLElement | null;
+      if (memBar) memBar.style.width = `${memPct}%`;
+      setSegmentUsage(memSeg as HTMLElement, memPct);
+    }
+
+    const rxEl = strip.querySelector(".w-rx");
+    if (rxEl) {
+      rxEl.textContent = `↓ ${fmtRate(s.net_rx_bps)}`;
+      strip.querySelector(".w-tx")!.textContent = `↑ ${fmtRate(s.net_tx_bps)}`;
+    }
+
+    const diskSeg = strip.querySelector(".seg-disk");
+    if (diskSeg) {
+      const disk = primaryDisk(s.disks);
+      const diskEl = strip.querySelector(".w-disk");
+      const diskBar = strip.querySelector(".w-disk-bar") as HTMLElement | null;
+      if (disk && disk.total > 0) {
+        const used = disk.total - disk.available;
+        const diskPct = diskUsedPct(disk.total, disk.available);
+        if (diskEl) diskEl.textContent = fmtDiskUsage(used, disk.total);
+        if (diskBar) diskBar.style.width = `${diskPct}%`;
+        setSegmentUsage(diskSeg as HTMLElement, diskPct);
+      } else {
+        if (diskEl) diskEl.textContent = "–";
+        if (diskBar) diskBar.style.width = "0%";
+        diskSeg.classList.remove("usage-ok", "usage-warn", "usage-err");
+      }
+    }
+
+    const usersEl = strip.querySelector(".w-users");
+    if (usersEl) {
+      usersEl.textContent = fmtUsers(s.active_users ?? 0);
+    }
+
     fitWindow();
   }
 
@@ -956,6 +1221,18 @@ function renderWidget(root: HTMLElement) {
       .catch(() => {})
       .finally(() => fitWindow());
   });
+
+  listen<WidgetPrefs>("widget-prefs-changed", (e) => {
+    widgetPrefs = cloneWidgetPrefs(e.payload);
+    refreshSources().catch(() => {});
+  });
+
+  getWidgetPrefs()
+    .then((prefs) => {
+      widgetPrefs = cloneWidgetPrefs(prefs);
+      refreshSources().catch(() => {});
+    })
+    .catch(() => {});
 
   win.onFocusChanged(({ payload: focused }) => {
     if (focused) {
