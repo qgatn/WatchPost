@@ -29,9 +29,8 @@ jobs:
           - platform: macos-latest
             args: "--target aarch64-apple-darwin"
             rust-target: aarch64-apple-darwin
-          # Intel Mac — native on macos-13 (x86_64 runner). ssh2 uses vendored
-          # OpenSSL so cross-compiles also work if this runner is unavailable.
-          - platform: macos-13
+          # Intel Mac — macos-13 was retired Dec 2025; use macos-15-intel instead.
+          - platform: macos-15-intel
             args: ""
             rust-target: ""
           - platform: windows-latest
@@ -53,7 +52,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Add Rust cross-target (macOS arm64)
+      - name: Add Rust cross-target
         if: matrix.rust-target != ''
         run: rustup target add ${{ matrix.rust-target }}
 

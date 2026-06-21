@@ -86,7 +86,7 @@ git push origin main
 git push origin v0.1.0
 ```
 
-GitHub Actions builds **macOS (arm64 + x64), Windows, and Linux** and attaches installers to a **draft** release. Review and click **Publish** on the Releases page.
+GitHub Actions builds **macOS (Apple Silicon + Intel), Windows, and Linux** and attaches installers to a **draft** release. Intel Mac builds use the `macos-15-intel` runner (`macos-13` was retired in late 2025).
 
 Local build output: `src-tauri/target/release/bundle/`
 
