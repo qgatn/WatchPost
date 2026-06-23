@@ -146,6 +146,27 @@ struct SshSetupInfo {
     public_key: Option<String>,
 }
 
+/// Build-time metadata (version, author, UTC timestamp). Also written to bundled `ABOUT.md`.
+#[derive(Serialize)]
+struct AppAbout {
+    product: &'static str,
+    version: &'static str,
+    author: &'static str,
+    copyright: &'static str,
+    build_utc: &'static str,
+}
+
+#[tauri::command]
+fn get_app_about() -> AppAbout {
+    AppAbout {
+        product: "WatchPost",
+        version: env!("WATCHPOST_VERSION"),
+        author: env!("WATCHPOST_AUTHOR"),
+        copyright: env!("WATCHPOST_COPYRIGHT"),
+        build_utc: env!("WATCHPOST_BUILD_UTC"),
+    }
+}
+
 #[tauri::command]
 fn list_servers(app: AppHandle) -> Result<Vec<ServerEntry>, String> {
     store::load_servers(data_dir(&app)?)
@@ -390,6 +411,7 @@ pub fn run() {
             test_server,
             diagnose_server,
             get_ssh_setup_info,
+            get_app_about,
             get_widget_prefs,
             set_widget_prefs,
         ])

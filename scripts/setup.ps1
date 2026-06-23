@@ -25,16 +25,9 @@ $ok = (Test-Tool "rustc" "rustc") -and $ok
 if (-not $ok) {
     Write-Host ""
     Write-Host "Cannot continue — install the missing tools first." -ForegroundColor Yellow
-    Write-Host "WatchPost cannot bundle Node/npm/Rust; they must exist on your machine."
     Write-Host ""
-    Write-Host "  Node (includes npm) — https://nodejs.org/  (LTS)"
-    Write-Host "  Rust (includes cargo) — https://rustup.rs/  (restart terminal after)"
-    Write-Host ""
-    Write-Host "  C++ Build Tools (required for Tauri on Windows):"
-    Write-Host "  https://visualstudio.microsoft.com/visual-cpp-build-tools/"
-    Write-Host "  Workload: Desktop development with C++"
-    Write-Host ""
-    Write-Host "  WebView2 — usually preinstalled on Windows 11"
+    Write-Host "Full install guide (downloads, verify, PATH):"
+    Write-Host "  wiki/Build-from-source.md"
     Write-Host ""
     Write-Host "After installing, reopen the terminal and run:"
     Write-Host "  powershell -ExecutionPolicy Bypass -File scripts/setup.ps1"

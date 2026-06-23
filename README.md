@@ -19,14 +19,7 @@ If SSH works in Terminal but WatchPost reports an agent error, see the **[SSH FA
 
 ## Requirements
 
-Install these before running setup:
-
-| | macOS | Windows |
-|---|-------|---------|
-| Node.js 20+ (includes npm) | [nodejs.org](https://nodejs.org/) · `brew install node` | [nodejs.org](https://nodejs.org/) LTS |
-| Rust | [rustup.rs](https://rustup.rs/) · `brew install rust` | [rustup.rs](https://rustup.rs/) |
-| Native toolchain | `xcode-select --install` | [VS Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) — *Desktop development with C++* |
-| WebView | included | WebView2 (included on Windows 11) |
+Node.js 20+, Rust, and a native C++ toolchain must be installed before setup. **Step-by-step install instructions (downloads, verify commands, PATH):** **[wiki/Build-from-source.md](wiki/Build-from-source.md)**.
 
 ## Getting started
 
@@ -105,6 +98,7 @@ wiki/          FAQ and wiki pages (sync to GitHub Wiki if used)
 
 | Resource | Description |
 |----------|-------------|
+| [wiki/Build-from-source.md](wiki/Build-from-source.md) | Install prerequisites and build from source (macOS / Windows) |
 | [wiki/FAQ.md](wiki/FAQ.md) | SSH troubleshooting, agent setup (macOS / Windows) |
 | [wiki/RELEASE.md](wiki/RELEASE.md) | Tagging, GitHub Actions builds, publishing installers |
 | [wiki/Home.md](wiki/Home.md) | Wiki index |

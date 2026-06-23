@@ -30,7 +30,7 @@ See [Tauri — Windows Code Signing](https://v2.tauri.app/distribute/sign/window
 
    This runs tests, `npm run build`, and a full `tauri build` for your current OS.
 
-1. **Bump the version** in `src-tauri/tauri.conf.json` and `package.json` (keep them in sync).
+1. **Bump the version** in `src-tauri/tauri.conf.json`, `package.json`, and `src-tauri/Cargo.toml` (all three must match; the Rust build checks `tauri.conf.json` vs `Cargo.toml`). The git tag must use the same number: tag `v0.2.0` ↔ in-build `0.2.0`.
 
 2. **Commit** the version bump on `main`.
 
