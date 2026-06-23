@@ -2,138 +2,112 @@
 
 ## SSH and remote servers
 
-### How does WatchPost authenticate over SSH?
+### Authentication model
 
-WatchPost uses **SSH public-key authentication** via the **OpenSSH agent**. It does not accept passwords or pasted private keys.
+WatchPost uses **SSH public-key authentication** through the **OpenSSH agent**. It does not accept passwords or pasted private keys.
 
-You must install your **public key** on the server beforehand (for example with `ssh-copy-id` or by appending to `~/.ssh/authorized_keys`). The private key remains on your computer.
+Install your **public key** on the server first (`ssh-copy-id` or `authorized_keys`). The private key stays on your PC.
+
+Password auth may be added later; key-based auth via the agent is the supported path today.
 
 ---
 
-### I put my public key on the server — why does WatchPost still fail?
+### Two steps on your PC (not just the server)
 
-SSH needs **two** things on your PC, not one:
+| Step | What | Where |
+|------|------|--------|
+| 1 | **Public** key on the server | `authorized_keys` (one-time) |
+| 2 | **Private** key in the **OpenSSH agent** | `ssh-add` on your machine |
 
-| Step | What | Who does it |
-|------|------|-------------|
-| 1 | **Public** key on the server (`authorized_keys`) | You (one-time, via `ssh-copy-id` or the wizard’s copy-paste commands) |
-| 2 | **Private** key available to WatchPost via the **OpenSSH agent** | You (`ssh-add` on macOS/Windows) |
+PowerShell `ssh` can work after step 1 alone because it may read `~/.ssh/id_ed25519` from disk. **WatchPost uses the agent only.** Copying the `.pub` file to the server is not enough unless the matching private key is loaded.
 
-PowerShell `ssh` can succeed after step 1 alone because it also reads `id_ed25519` from disk. **WatchPost only uses step 2** (agent auth). Copying the `.pub` file to the server is not enough unless your private key is loaded into the agent.
-
-Quick check before testing in the app:
+Check before testing in the app:
 
 ```bash
-ssh-add -l          # macOS / Linux / Git Bash on Windows
+ssh-add -l    # macOS / Linux / Git Bash
 ```
 
 ```powershell
-ssh-add -l          # PowerShell (Windows OpenSSH)
+ssh-add -l    # Windows OpenSSH
 ```
 
 If this reports **no identities**, run `ssh-add` (see platform sections below), then restart WatchPost.
 
 ---
 
-### SSH works in my terminal but WatchPost reports an agent error. Why?
-
-The OpenSSH client (`ssh`) and WatchPost do not load keys the same way.
+### Terminal works; WatchPost does not
 
 | | Terminal (`ssh`) | WatchPost |
 |---|------------------|-----------|
-| Authentication | Agent, or key files on disk | **Agent only** |
-| Typical launch | Shell session | Desktop app (Dock, Start menu, installer) |
-| Windows agent | Often uses `\\.\pipe\openssh-ssh-agent` automatically | Same pipe (not PuTTY/Pageant) |
+| Auth | Agent and/or key files on disk | **Agent only** |
+| Process | Your shell | Desktop app (Dock, Start menu, installer) |
+| Windows pipe | `\\.\pipe\openssh-ssh-agent` | Same (not PuTTY/Pageant) |
 
-A common case: your key exists at `~/.ssh/id_ed25519`, Terminal login succeeds, but the **agent holds no identities**. The CLI falls back to the key file; WatchPost does not.
+Typical case: the key file exists, terminal login works, but the agent holds no identities. The CLI falls back to the file; WatchPost does not.
 
 ---
 
-### What do the SSH error codes mean?
+### Error codes in diagnostics
 
-WatchPost uses the `ssh2` library (libssh2). Negative numbers in `[Session(-NN)]` point to the failure stage.
+WatchPost uses `ssh2` (libssh2). Negative numbers in `[Session(-NN)]` mark the failure stage.
 
-| Code | Stage | Typical meaning | What to try |
-|------|-------|-----------------|-------------|
-| **-34** | Authentication | **No keys in the SSH agent** (or agent unreachable) | Run `ssh-add` and confirm `ssh-add -l` lists a key; restart WatchPost |
-| **-43** | SSH handshake | **Socket read failed** during handshake (before auth) | Check host/port/firewall; same machine as `ssh`; retry; see handshake notes below |
+| Code | Stage | Meaning | Fix |
+|------|-------|---------|-----|
+| **-34** | Auth | No keys in agent (or agent unreachable) | `ssh-add`, confirm `ssh-add -l`, restart app |
+| **-43** | Handshake | TCP started but SSH exchange failed | Host/port/firewall/VPN; not a missing server key |
 
-**Agent error (-34)** — message often looks like:
+Example **-34**:
 
 ```text
 agent auth failed: [Session(-34)] no identities found in the ssh agent
 ```
 
-**Handshake error (-43)** — message often looks like:
+Example **-43**:
 
 ```text
 SSH handshake: [Session(-43)] ...
 ```
 
-`-43` is **not** “wrong password” or “missing public key on server”. It means the TCP connection started but the SSH protocol exchange failed (timeout, connection dropped, firewall, or occasional Windows socket quirks). Fix connectivity first; if `ssh -p PORT user@host` works from the same PC with the same host/port, retry WatchPost or open **Diagnostics** for the full message.
+`-43` is not “wrong password.” If `ssh -p PORT user@host` works from the same PC, retry WatchPost or open **Diagnostics** for the full message.
 
-Other messages:
-
-```text
-authentication failed — is your public key on the server?
-```
-
-→ Handshake succeeded but no key was accepted. Check `authorized_keys` on the server **and** that `ssh-add -l` shows a key on your PC.
+**Authentication failed** after a successful handshake means the server rejected keys — check `authorized_keys` **and** `ssh-add -l` on your PC.
 
 ---
 
-### How do I fix this on macOS?
+### macOS agent setup
 
-**1. Confirm you have a key**
+**1. Key pair**
 
 ```bash
 ls ~/.ssh/id_ed25519 ~/.ssh/id_ed25519.pub
+ssh-keygen -t ed25519 -C "your-email@example.com"   # if missing
 ```
 
-If missing, create one:
-
-```bash
-ssh-keygen -t ed25519 -C "your-email@example.com"
-```
-
-**2. Load the key into the agent**
+**2. Load into agent**
 
 ```bash
 ssh-add --apple-use-keychain ~/.ssh/id_ed25519
 ssh-add -l
 ```
 
-The second command should list your key. If it reports that the agent has no identities, WatchPost will fail until this step succeeds.
-
-**3. Install the public key on the server**
+**3. Public key on server**
 
 ```bash
 ssh-copy-id -p PORT user@host
-```
-
-**4. Verify outside WatchPost**
-
-```bash
 ssh -p PORT user@host
 ```
 
-**5. Restart WatchPost**
+**4. Restart WatchPost** after `ssh-add`.
 
-If you are running a development build, launching from the same Terminal session after `ssh-add` can help isolate environment issues:
-
-```bash
-npm run start
-```
-
-For a packaged `.app`, a normal restart after `ssh-add` is sufficient when the key is stored in Keychain via `--apple-use-keychain`.
+Dev builds launched from the same Terminal session after `ssh-add` can help isolate environment issues. Packaged `.app` builds rely on Keychain + agent only.
 
 ---
 
-### How do I fix this on Windows?
+### Windows agent setup
 
-Windows uses the **OpenSSH Authentication Agent** service (`ssh-agent`). It is often **disabled by default**. WatchPost talks to the same agent as `ssh-add`, via the named pipe `\\.\pipe\openssh-ssh-agent` — **not** PuTTY, Pageant, or Git Credential Manager alone.
+WatchPost uses the **OpenSSH Authentication Agent** (`ssh-agent`), often **disabled by default**. Not PuTTY, Pageant, or Git Credential Manager alone.
 
-**1. Enable and start the agent** (PowerShell as Administrator, once per machine)
+**1. Enable the service** (PowerShell as Administrator, once)
 
 ```powershell
 Get-Service ssh-agent
@@ -141,118 +115,69 @@ Set-Service ssh-agent -StartupType Automatic
 Start-Service ssh-agent
 ```
 
-**2. Load your private key into the agent**
-
-Putting the `.pub` file on the server is not enough — load the matching **private** key:
+**2. Load private key**
 
 ```powershell
 ssh-add $env:USERPROFILE\.ssh\id_ed25519
 ssh-add -l
 ```
 
-`ssh-add -l` must list at least one key. If it says *The agent has no identities*, WatchPost will fail even when `ssh` from PowerShell works (because `ssh` may read the key file directly).
-
-**3. Use Windows OpenSSH for testing**
-
-Confirm which `ssh` you use:
+**3. Confirm OpenSSH client**
 
 ```powershell
-Get-Command ssh
-```
-
-Prefer `C:\Windows\System32\OpenSSH\ssh.exe`. Git for Windows may ship a different `ssh.exe` with different agent behavior.
-
-**4. Test SSH without a password prompt**
-
-```powershell
+Get-Command ssh    # prefer C:\Windows\System32\OpenSSH\ssh.exe
 ssh -p PORT user@host
 ```
 
-Use the **same** host, port, and username in the WatchPost add-server wizard.
-
-**5. Restart WatchPost**
-
-Fully quit the app (if both main window and widget are hidden, the process may still be running — open the widget or main window from the taskbar, then quit). Start again after `ssh-add`.
-
-**Windows-specific pitfalls**
+**4. Restart WatchPost** — fully quit (widget + main) before retesting.
 
 | Situation | Result |
 |-----------|--------|
-| Public key on server, never ran `ssh-add` | PowerShell `ssh` may work; WatchPost fails with **-34** |
-| PuTTY / Pageant only | WatchPost does not see those keys |
-| `ssh-agent` service stopped | Agent errors in app and often `ssh-add` failures |
-| Handshake **-43** | Check firewall/VPN, host/port, retry; not an agent/key-on-server issue |
+| Public key on server, never `ssh-add` | Terminal may work; WatchPost **-34** |
+| PuTTY / Pageant only | Keys not visible to WatchPost |
+| `ssh-agent` stopped | Agent errors |
+| Handshake **-43** | Network/firewall, not agent |
 
 ---
 
-### Will the packaged app behave differently from a dev build?
+### Dev build vs installed app
 
-The authentication model is the same. The difference is how the process starts.
-
-- **Dev build from Terminal** — may inherit shell environment variables, including access to an already-populated agent.
-- **Installed app** (Dock, Applications folder, Start menu) — relies on the system agent only; no shell inheritance.
-
-Users who never run `ssh-add` (or who have the Windows agent disabled) are more likely to see agent errors in the installed app, even when `ssh` in a terminal works.
+Same authentication model. A Terminal-launched dev build may inherit shell environment; an installed app uses only the system agent. Users who never run `ssh-add` (or have Windows agent disabled) see agent errors in the installed app even when terminal `ssh` works.
 
 ---
 
-### Do I put my private key into WatchPost?
+### Add-server wizard fields
 
-No. Never paste or import a private key into the application.
-
-Only the **public** key belongs on the server. WatchPost reads credentials from the system SSH agent on your machine.
-
----
-
-### What belongs in the add-server wizard?
-
-Use the same host, port, and username that work in Terminal.
+Use the same host, port, and user that work in Terminal.
 
 | Field | Example |
 |-------|---------|
-| Alias | Display name in WatchPost (e.g. `prod-web`) |
+| Alias | `prod-web` (display name, max 15 chars) |
 | Host | IP or hostname |
-| Port | Usually `22`; use your custom port if applicable |
-| User | SSH account on the server |
+| Port | `22` or custom |
+| User | SSH account |
 
-The setup step shows commands to generate a key (if needed) and install the public key on the server. Copy those commands into your terminal on the **machine running WatchPost**, not on the remote server (except where the command explicitly targets the server).
-
----
-
-### Test connection fails with "authentication failed"
-
-Check in order:
-
-1. Public key is in the server user's `~/.ssh/authorized_keys`.
-2. Permissions on the server: `~/.ssh` is `700`, `authorized_keys` is `600`.
-3. `ssh -p PORT user@host` works from the same machine as WatchPost, without a password prompt.
-4. On macOS/Windows, `ssh-add -l` lists at least one key before testing in WatchPost.
+Setup-step commands run on the **machine running WatchPost**, except where they target the server explicitly.
 
 ---
 
-### Test connection succeeds but metrics do not update
+### Test passes; metrics do not update
 
-WatchPost’s **Test connection** only runs `uname` and `hostname`. Ongoing stats use a separate metrics script (~1 second, needs `bash`, `awk`, `df`, and `/proc`).
+**Test connection** runs `uname` and `hostname` only. Ongoing stats use a bash metrics script (~1s, needs `bash`, `awk`, `df`, `/proc` on Linux).
 
-In the app, open **Diagnostics** (top bar when a remote server is selected) or **Run full diagnostics** in the add-server wizard. The log shows which step failed and the error text from the server.
-
-Common causes:
-
-- Missing tools on the server (`awk`, `df`, `procps`)
-- Metrics script error (stderr now included in the message)
-- Connection dropped after the initial test
+Open **Diagnostics** (remote source selected) or **Run full diagnostics** in the wizard. Common causes: missing server tools, script stderr, or dropped connection after the initial test.
 
 ---
 
+### Authentication failed (checklist)
 
-### Why doesn't WatchPost use password authentication?
-
-Password auth is less suitable for a background monitor: credentials would need secure storage, rotation is harder, and many servers disable password login. Key-based auth via the agent matches standard server-hardening practice.
-
-Password and custom key-file options may be added in a later release.
+1. Public key in `~/.ssh/authorized_keys` on the server.
+2. Server permissions: `~/.ssh` `700`, `authorized_keys` `600`.
+3. `ssh -p PORT user@host` from the same machine, no password prompt.
+4. `ssh-add -l` lists a key before testing in WatchPost.
 
 ---
 
-### Planned improvements
+### Roadmap
 
-We are evaluating a dedicated WatchPost key (generated by the app, installed on the server as a normal public key) to reduce dependence on the system agent, particularly for installed builds on macOS and Windows. Until then, loading your key into the agent remains the supported path.
+A WatchPost-generated key (installed on servers as a normal public key) is under consideration to reduce agent dependency on installed builds. Until then, load your existing key into the agent.

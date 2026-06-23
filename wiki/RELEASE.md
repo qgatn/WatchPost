@@ -1,77 +1,70 @@
 # Releasing WatchPost
 
-WatchPost ships installers for **macOS** and **Windows** via GitHub Releases. Builds run on GitHub's servers — you do not need a Windows machine locally.
+Installers for **macOS** and **Windows** are built on GitHub Actions — you do not need a Windows machine to ship a Windows build.
 
 ## One-time setup
 
-1. Push this repository to GitHub (if not already).
-2. Ensure **Actions** are enabled: repo **Settings → Actions → General → Allow all actions**.
-3. No extra secrets are required for unsigned builds (`GITHUB_TOKEN` is provided automatically).
+1. Push the repository to GitHub.
+2. **Settings → Actions → General** — allow Actions.
+3. No secrets required for unsigned builds (`GITHUB_TOKEN` is automatic).
 
-Optional later (for signed/notarized builds):
-
-| Secret | Platform | Purpose |
-|--------|----------|---------|
-| `APPLE_CERTIFICATE` | macOS | Base64 `.p12` signing cert |
-| `APPLE_CERTIFICATE_PASSWORD` | macOS | Cert password |
-| `APPLE_SIGNING_IDENTITY` | macOS | e.g. `Developer ID Application: …` |
-| `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | macOS | Notarization |
-| `TAURI_SIGNING_PRIVATE_KEY` | Windows | Code signing (optional) |
-
-See [Tauri — Windows Code Signing](https://v2.tauri.app/distribute/sign/windows/) and [macOS Code Signing](https://v2.tauri.app/distribute/sign/macos/).
+Optional signing secrets (macOS notarization, Windows code signing) are documented in [Tauri distribute guides](https://v2.tauri.app/distribute/sign/macos/).
 
 ## Cut a release
 
-0. **Verify locally** (catches most CI failures before you push a tag):
+**0. Verify locally**
 
-   ```bash
-   npm run release:check
-   ```
+```bash
+npm run release:check
+```
 
-   This runs tests, `npm run build`, and a full `tauri build` for your current OS.
+Runs tests, frontend build, and `tauri build` on your current OS.
 
-1. **Bump the version** in `src-tauri/tauri.conf.json`, `package.json`, and `src-tauri/Cargo.toml` (all three must match; the Rust build checks `tauri.conf.json` vs `Cargo.toml`). The git tag must use the same number: tag `v0.2.0` ↔ in-build `0.2.0`.
+**1. Bump version** in all three (must match):
 
-2. **Commit** the version bump on `main`.
+- `package.json`
+- `src-tauri/tauri.conf.json`
+- `src-tauri/Cargo.toml`
 
-3. **Tag and push:**
+Tag format: `v0.2.0` ↔ in-build `0.2.0`. The Rust build fails if `tauri.conf.json` and `Cargo.toml` disagree.
 
-   ```bash
-   git tag v0.1.0
-   git push origin main
-   git push origin v0.1.0
-   ```
+**2. Commit** on `main`.
 
-4. **Watch the workflow:** GitHub → **Actions** → **Release**. Three jobs run in parallel (macOS arm64, macOS x64, Windows).
+**3. Tag and push**
 
-5. **Publish the draft:** When all jobs finish, open **Releases** → the new **draft** release → review attached files → **Publish release**.
+```bash
+git tag v0.2.0
+git push origin main
+git push origin v0.2.0
+```
+
+**4. Actions → Release** — three jobs (macOS arm64, macOS Intel, Windows).
+
+**5. Releases** — open the **draft**, review artifacts, **Publish release**.
+
+Pushing the same tag again does nothing; move the tag if you need to rebuild.
 
 ## What users download
 
-| Platform | Typical file |
-|----------|----------------|
-| macOS (Apple Silicon) | `.dmg` with `aarch64` in the name |
-| macOS (Intel) | `.dmg` with `x64` in the name |
-| Windows | `.msi` and/or `.exe` (NSIS) |
+| Platform | Artifact |
+|----------|----------|
+| macOS Apple Silicon | `.dmg` (`aarch64`) |
+| macOS Intel | `.dmg` (`x64`) |
+| Windows | `.msi` and/or NSIS `.exe` |
 
 ## Unsigned builds (default)
 
-Installers are **not code-signed**. Users may see:
+- **macOS:** Gatekeeper — right-click → **Open**, or `xattr -dr com.apple.quarantine /Applications/WatchPost.app`
+- **Windows:** SmartScreen — **More info → Run anyway**
 
-- **macOS:** Gatekeeper block → right-click the app → **Open**, or remove quarantine:  
-  `xattr -dr com.apple.quarantine /Applications/WatchPost.app`
-- **Windows:** SmartScreen → **More info** → **Run anyway**
-
-## Manual build (local)
-
-Build only for the OS you are on:
+## Local package
 
 ```bash
 npm run package
 ```
 
-Artifacts: `src-tauri/target/release/bundle/`
+Output: `src-tauri/target/release/bundle/`. See [Build from source](Build-from-source) for sharing unsigned builds with colleagues.
 
-## Trigger a build without a tag
+## Manual workflow run
 
-Actions → **Release** → **Run workflow** (manual `workflow_dispatch`).
+Actions → **Release** → **Run workflow** — builds without a tag (release name follows the branch; prefer tagged releases for versioned drops).

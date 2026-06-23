@@ -44,8 +44,8 @@ if [ "$missing" -ne 0 ]; then
   echo "  wiki/Build-from-source.md"
   echo ""
   echo "After installing, reopen the terminal and run:"
-  echo "  bash scripts/setup.sh"
-  echo "  # or: npm run setup"
+  echo "  bash scripts/install-prerequisites-macos.sh   # install Node, Rust, Xcode CLT"
+  echo "  bash scripts/setup.sh                         # or: npm run setup"
   exit 1
 fi
 

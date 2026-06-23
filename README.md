@@ -1,107 +1,59 @@
 # WatchPost
 
-Lightweight desktop monitor for your PC and remote servers. Live CPU, memory, disk, and network stats in a full dashboard and a desktop widget.
+Lightweight desktop monitor for your PC and remote Linux servers — live CPU, memory, disk, and network in a dashboard and a desktop widget.
 
-Built with [Tauri](https://tauri.app/) (Rust + system webview). Supports macOS and Windows.
+Built with [Tauri](https://tauri.app/) (Rust + system webview). macOS and Windows.
 
 ## Features
 
-- Local system metrics (CPU, memory, swap, disk, network)
-- Compact desktop widget (frameless, sits below other windows)
-- Remote Linux servers over SSH (agent auth, add-server wizard)
-- Low footprint — no bundled browser, timer-driven sampling
+- Local system metrics
+- Configurable desktop widget (stack position, metrics, display style)
+- Remote Linux servers over SSH (add-server wizard, diagnostics)
+- Low footprint — timer-driven sampling, no bundled browser
 
-## Remote servers (SSH)
-
-WatchPost connects to Linux servers using **SSH public-key authentication** via the system **OpenSSH agent**. Password login is not supported. Install your public key on the server before adding it in the app (`ssh-copy-id` or manual `authorized_keys` entry).
-
-If SSH works in Terminal but WatchPost reports an agent error, see the **[SSH FAQ](wiki/FAQ.md)** (macOS and Windows).
-
-## Requirements
-
-Node.js 20+, Rust, and a native C++ toolchain must be installed before setup. **Step-by-step install instructions (downloads, verify commands, PATH):** **[wiki/Build-from-source.md](wiki/Build-from-source.md)**.
-
-## Getting started
+## Quick start
 
 ```bash
 git clone https://github.com/qgatn/WatchPost.git
 cd WatchPost
-npm run setup
-npm run start
 ```
 
-**macOS (Homebrew):** if `node` or `npm` is not found, prepend Homebrew to your path:
+**First time on this machine** — install build tools, then project dependencies:
+
+| Platform | Prerequisites (downloads from the internet) | Project setup |
+|----------|---------------------------------------------|---------------|
+| macOS | `bash scripts/install-prerequisites-macos.sh` | `npm run setup` |
+| Windows | `powershell -ExecutionPolicy Bypass -File scripts/install-prerequisites-windows.ps1` | `npm run setup` |
+
+Either platform can use `npm run install-deps` instead of the platform script (requires Node already, so use the shell script on a fresh machine).
 
 ```bash
-export PATH="/opt/homebrew/bin:$PATH"
+npm run start    # development mode (first run compiles Rust — several minutes)
 ```
 
-**Windows:** if `npm run setup` fails, run the setup script directly:
+Full detail, path options, and manual fallback: **[wiki/Build-from-source.md](wiki/Build-from-source.md)**.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
-npm run start
-```
+SSH agent setup for remote servers: **[wiki/FAQ.md](wiki/FAQ.md)**.
 
-The first launch compiles Rust dependencies and may take a few minutes.
-
-## Scripts
+## Commands
 
 | Command | Description |
 |---------|-------------|
-| `npm run setup` | Verify prerequisites and install dependencies |
+| `npm run install-deps` | Install OS prerequisites (Node, Rust, compilers) |
+| `npm run setup` | Verify tools and install npm dependencies |
 | `npm run start` | Run in development mode |
 | `npm test` | Run test suite |
-| `npm run package` | Build release installer for the current OS |
-| `npm run release:check` | Tests + production build + package (run before pushing a tag) |
-| `npm run icons` | Regenerate all app icons from `app-icon.png` |
-
-## App icon
-
-White lighthouse on graphite (`#1a1a1a`), generated from `src/assets/lighthouse.png`:
-
-- `scripts/make_icon.py` → `app-icon.png`
-- `npm run icons` → all platform icons under `src-tauri/icons/`
-- `scripts/icon_variants.py` → local previews in `scratchpad/icon-previews/` (optional)
-
-Requires Pillow (`pip install pillow` in a venv).
-
-## Packaging
-
-See **[wiki/RELEASE.md](wiki/RELEASE.md)** for the full release guide (GitHub Actions, tagging, what users download).
-
-Quick start:
-
-```bash
-# bump version in src-tauri/tauri.conf.json + package.json, commit, then:
-git tag v0.1.0
-git push origin main
-git push origin v0.1.0
-```
-
-GitHub Actions builds **macOS (Apple Silicon + Intel) and Windows** and attaches installers to a **draft** release. Intel Mac builds use the `macos-15-intel` runner (`macos-13` was retired in late 2025).
-
-Local build output: `src-tauri/target/release/bundle/`
-
-Unsigned builds: macOS Gatekeeper and Windows SmartScreen may warn on first run (see wiki).
-
-## Project structure
-
-```
-src/           Frontend (TypeScript, Vite)
-src-tauri/     Rust backend (Tauri, metrics)
-scripts/       Platform setup scripts
-wiki/          FAQ and wiki pages (sync to GitHub Wiki if used)
-```
+| `npm run package` | Build a release installer for this OS |
+| `npm run release:check` | Tests + production build (before tagging) |
 
 ## Documentation
 
-| Resource | Description |
-|----------|-------------|
-| [wiki/Build-from-source.md](wiki/Build-from-source.md) | Install prerequisites and build from source (macOS / Windows) |
-| [wiki/FAQ.md](wiki/FAQ.md) | SSH troubleshooting, agent setup (macOS / Windows) |
-| [wiki/RELEASE.md](wiki/RELEASE.md) | Tagging, GitHub Actions builds, publishing installers |
-| [wiki/Home.md](wiki/Home.md) | Wiki index |
+| Page | Contents |
+|------|----------|
+| [Build from source](wiki/Build-from-source.md) | Prerequisite scripts, clone, build, share installers |
+| [FAQ](wiki/FAQ.md) | SSH and agent troubleshooting |
+| [Release](wiki/RELEASE.md) | GitHub Actions, tagging, publishing installers |
+| [Wiki index](wiki/Home.md) | All wiki pages |
 
 ## License
 

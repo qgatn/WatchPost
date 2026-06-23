@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "setup": "node scripts/setup.mjs",
+    "install-deps": "node scripts/install-deps.mjs",
     "start": "tauri dev",
     "package": "tauri build",
     "release:check": "bash scripts/release-check.sh",

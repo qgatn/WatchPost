@@ -30,8 +30,8 @@ if (-not $ok) {
     Write-Host "  wiki/Build-from-source.md"
     Write-Host ""
     Write-Host "After installing, reopen the terminal and run:"
-    Write-Host "  powershell -ExecutionPolicy Bypass -File scripts/setup.ps1"
-    Write-Host "  # or: npm run setup"
+    Write-Host "  powershell -ExecutionPolicy Bypass -File scripts/install-prerequisites-windows.ps1"
+    Write-Host "  powershell -ExecutionPolicy Bypass -File scripts/setup.ps1   # or: npm run setup"
     exit 1
 }
 
