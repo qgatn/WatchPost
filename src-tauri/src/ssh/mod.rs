@@ -1,7 +1,7 @@
 //! SSH connect, test, and Linux metrics collection.
 
-mod linux;
 mod diagnose;
+mod linux;
 
 pub use diagnose::DiagnoseResult;
 
@@ -48,12 +48,20 @@ fn connect_session(entry: &ServerEntry) -> Result<Session, String> {
 
     let mut sess = Session::new().map_err(|e| e.to_string())?;
     sess.set_tcp_stream(tcp);
-    sess.handshake().map_err(|e| format!("SSH handshake: {e}"))?;
+    sess.handshake()
+        .map_err(|e| format!("SSH handshake: {e}"))?;
 
     match entry.auth {
         AuthMethod::Agent => {
-            sess.userauth_agent(&entry.user)
-                .map_err(|e| format!("agent auth failed: {e}"))?;
+            let agent_err = sess.userauth_agent(&entry.user).err();
+            if !sess.authenticated() {
+                try_default_key_files(&mut sess, &entry.user).map_err(
+                    |key_err| match agent_err {
+                        Some(e) => format!("agent auth failed: {e}; {key_err}"),
+                        None => key_err,
+                    },
+                )?;
+            }
         }
         AuthMethod::KeyFile => {
             let path = entry
@@ -72,13 +80,55 @@ fn connect_session(entry: &ServerEntry) -> Result<Session, String> {
     Ok(sess)
 }
 
+fn home_dir() -> Option<String> {
+    for var in ["HOME", "USERPROFILE"] {
+        if let Ok(home) = std::env::var(var) {
+            if !home.is_empty() {
+                return Some(home);
+            }
+        }
+    }
+    None
+}
+
 fn expand_home(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
+        if let Some(home) = home_dir() {
             return format!("{home}/{rest}");
         }
     }
     path.to_string()
+}
+
+fn default_private_key_paths() -> Vec<String> {
+    let Some(home) = home_dir() else {
+        return Vec::new();
+    };
+    let ssh = format!("{home}/.ssh");
+    ["id_ed25519", "id_rsa"]
+        .into_iter()
+        .map(|name| format!("{ssh}/{name}"))
+        .collect()
+}
+
+/// OpenSSH CLI reads default key files when the agent is empty; match that on Windows.
+fn try_default_key_files(sess: &mut Session, user: &str) -> Result<(), String> {
+    for path in default_private_key_paths() {
+        if !Path::new(&path).exists() {
+            continue;
+        }
+        if sess
+            .userauth_pubkey_file(user, None, Path::new(&path), None)
+            .is_ok()
+            && sess.authenticated()
+        {
+            return Ok(());
+        }
+    }
+    Err(
+        "no key in SSH agent and no default key file (~/.ssh/id_ed25519 or id_rsa) — run ssh-add or add a key"
+            .into(),
+    )
 }
 
 // Guard against a runaway/malicious remote dumping unbounded output into memory.
@@ -99,10 +149,7 @@ fn read_channel_stdout(channel: &mut ssh2::Channel) -> Result<String, String> {
                 Ok(n) => {
                     got = true;
                     if out.len() + n > MAX_STDOUT_BYTES {
-                        return Err(format!(
-                            "remote output exceeded {} bytes",
-                            MAX_STDOUT_BYTES
-                        ));
+                        return Err(format!("remote output exceeded {} bytes", MAX_STDOUT_BYTES));
                     }
                     out.extend_from_slice(&buf[..n]);
                 }
@@ -136,9 +183,7 @@ fn exec_capture(sess: &Session, cmd: &str) -> Result<String, String> {
     let mut channel = sess
         .channel_session()
         .map_err(|e| format!("channel: {e}"))?;
-    channel
-        .exec(cmd)
-        .map_err(|e| format!("exec: {e}"))?;
+    channel.exec(cmd).map_err(|e| format!("exec: {e}"))?;
     let stdout = read_channel_stdout(&mut channel)?;
     let stderr = read_channel_stderr(&mut channel);
     channel.wait_eof().map_err(|e| e.to_string())?;
@@ -174,7 +219,11 @@ pub fn test_connection(entry: &ServerEntry) -> TestResult {
                     };
                 }
             };
-            let mut lines: Vec<&str> = out.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+            let mut lines: Vec<&str> = out
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect();
             let hostname = lines.pop().map(|s| s.to_string());
             let os = lines.first().map(|s| s.to_string());
             TestResult {
@@ -206,7 +255,7 @@ pub fn diagnose_connection(entry: &ServerEntry) -> DiagnoseResult {
 }
 
 pub fn read_local_public_key() -> Option<(String, String)> {
-    let home = std::env::var("HOME").ok()?;
+    let home = home_dir()?;
     for name in ["id_ed25519.pub", "id_rsa.pub"] {
         let path = format!("{home}/.ssh/{name}");
         if let Ok(content) = fs::read_to_string(&path) {

@@ -8,6 +8,46 @@ use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, Networks, System};
 
+/// How often to re-run `query user` / `who` when active users are needed.
+pub const ACTIVE_USERS_POLL_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Cached active-user count with throttled subprocess polling.
+pub struct ActiveUsersTracker {
+    cached: usize,
+    last_poll: Option<Instant>,
+}
+
+impl ActiveUsersTracker {
+    pub fn new() -> Self {
+        Self {
+            cached: 0,
+            last_poll: None,
+        }
+    }
+
+    /// When `needed` is false, returns the cache without spawning a subprocess.
+    /// When `needed` is true, refreshes at most every [`ACTIVE_USERS_POLL_INTERVAL`].
+    pub fn value(&mut self, needed: bool) -> usize {
+        if !needed {
+            return self.cached;
+        }
+        let stale = self
+            .last_poll
+            .map(|t| t.elapsed() >= ACTIVE_USERS_POLL_INTERVAL)
+            .unwrap_or(true);
+        if stale {
+            self.cached = count_active_users();
+            self.last_poll = Some(Instant::now());
+        }
+        self.cached
+    }
+
+    /// Next `value(true)` will poll immediately (e.g. main opened or Users segment enabled).
+    pub fn invalidate(&mut self) {
+        self.last_poll = None;
+    }
+}
+
 /// Count logged-in sessions (console + SSH/tty). Used locally now; SSH remotes later.
 pub fn count_active_users() -> usize {
     #[cfg(target_family = "unix")]
@@ -25,7 +65,11 @@ pub fn count_active_users() -> usize {
     }
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        // GUI apps spawn visible console windows unless CREATE_NO_WINDOW is set.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         return Command::new("query")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg("user")
             .output()
             .ok()
@@ -50,10 +94,7 @@ pub fn count_active_users() -> usize {
 /// Convert byte deltas since the last refresh into bytes-per-second rates.
 pub fn compute_net_bps(rx: u64, tx: u64, elapsed_secs: f64) -> (u64, u64) {
     let elapsed = elapsed_secs.max(0.001);
-    (
-        (rx as f64 / elapsed) as u64,
-        (tx as f64 / elapsed) as u64,
-    )
+    ((rx as f64 / elapsed) as u64, (tx as f64 / elapsed) as u64)
 }
 
 /// Disk used percentage from total and available byte counts.
@@ -82,9 +123,9 @@ pub struct Snapshot {
     pub source: String, // "local" for now; later a server id/host
     pub hostname: String,
     pub os: String,
-    pub cpu_usage: f32,      // overall %, 0..100
-    pub per_core: Vec<f32>,  // per-core %
-    pub cpu_cores: usize,    // logical core count
+    pub cpu_usage: f32,     // overall %, 0..100
+    pub per_core: Vec<f32>, // per-core %
+    pub cpu_cores: usize,   // logical core count
     pub physical_cores: usize,
     pub mem_used: u64,
     pub mem_total: u64,
@@ -122,7 +163,7 @@ impl LocalSampler {
     }
 
     /// Take a fresh sample. Should be called on a timer (e.g. every ~1s).
-    pub fn sample(&mut self) -> Snapshot {
+    pub fn sample(&mut self, users: &mut ActiveUsersTracker, users_needed: bool) -> Snapshot {
         self.sys.refresh_cpu_usage();
         self.sys.refresh_memory();
         self.networks.refresh(true);
@@ -186,7 +227,7 @@ impl LocalSampler {
             net_tx_bps,
             disks,
             uptime_secs: System::uptime(),
-            active_users: count_active_users(),
+            active_users: users.value(users_needed),
             ts_ms,
         }
     }
@@ -254,10 +295,27 @@ mod tests {
     }
 
     #[test]
+    fn active_users_tracker_skips_poll_when_not_needed() {
+        let mut tracker = ActiveUsersTracker::new();
+        tracker.cached = 7;
+        tracker.last_poll = Some(Instant::now());
+        assert_eq!(tracker.value(false), 7);
+    }
+
+    #[test]
+    fn active_users_tracker_invalidate_marks_stale() {
+        let mut tracker = ActiveUsersTracker::new();
+        tracker.last_poll = Some(Instant::now());
+        tracker.invalidate();
+        assert!(tracker.last_poll.is_none());
+    }
+
+    #[test]
     fn local_sampler_produces_local_source() {
         let mut sampler = LocalSampler::new();
+        let mut tracker = ActiveUsersTracker::new();
         std::thread::sleep(Duration::from_millis(50));
-        let snap = sampler.sample();
+        let snap = sampler.sample(&mut tracker, false);
         assert_eq!(snap.source, "local");
         assert!(!snap.hostname.is_empty());
         assert!(snap.mem_total > 0);

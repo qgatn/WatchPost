@@ -90,10 +90,10 @@ impl PollerRegistry {
     }
 }
 
+struct ActiveUsersState(Arc<Mutex<metrics::ActiveUsersTracker>>);
+
 fn data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())
+    app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
 fn any_window_visible(app: &AppHandle) -> bool {
@@ -108,6 +108,30 @@ fn on_window_hidden(app: &AppHandle) {
     if !any_window_visible(app) {
         app.exit(0);
     }
+}
+
+fn invalidate_active_users(app: &AppHandle) {
+    if let Some(state) = app.try_state::<ActiveUsersState>() {
+        if let Ok(mut tracker) = state.0.lock() {
+            tracker.invalidate();
+        }
+    }
+}
+
+/// Poll `query user` / `who` only when the main dashboard or widget Users segment needs it.
+fn active_users_needed(app: &AppHandle) -> bool {
+    let main_visible = app
+        .get_webview_window("main")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    if main_visible {
+        return true;
+    }
+    data_dir(app)
+        .ok()
+        .and_then(|d| store::load_widget_prefs(d).ok())
+        .map(|p| p.segments.users)
+        .unwrap_or(false)
 }
 
 fn apply_widget_stack_mode(win: &WebviewWindow, mode: StackMode) -> Result<(), String> {
@@ -218,14 +242,12 @@ async fn test_server(server: NewServer) -> TestResult {
 
 #[tauri::command]
 async fn diagnose_server(server: NewServer) -> DiagnoseResult {
-    tauri::async_runtime::spawn_blocking(move || {
-        ssh::diagnose_connection(&entry_from_new(&server))
-    })
-    .await
-    .unwrap_or_else(|_| DiagnoseResult {
-        ok: false,
-        steps: Vec::new(),
-    })
+    tauri::async_runtime::spawn_blocking(move || ssh::diagnose_connection(&entry_from_new(&server)))
+        .await
+        .unwrap_or_else(|_| DiagnoseResult {
+            ok: false,
+            steps: Vec::new(),
+        })
 }
 
 #[tauri::command]
@@ -254,6 +276,9 @@ fn get_widget_prefs(app: AppHandle) -> Result<WidgetPrefs, String> {
 fn set_widget_prefs(app: AppHandle, prefs: WidgetPrefs) -> Result<(), String> {
     store::save_widget_prefs(data_dir(&app)?, &prefs)?;
     apply_widget_prefs_to_window(&app)?;
+    if prefs.segments.users {
+        invalidate_active_users(&app);
+    }
     let _ = app.emit("widget-prefs-changed", &prefs);
     Ok(())
 }
@@ -319,6 +344,7 @@ fn focus_main_window(app: &AppHandle) -> Result<(), String> {
     win.show().map_err(|e| e.to_string())?;
     let _ = win.unminimize();
     win.set_focus().map_err(|e| e.to_string())?;
+    invalidate_active_users(app);
     Ok(())
 }
 
@@ -368,12 +394,18 @@ fn run_server_poller(app: AppHandle, entry: ServerEntry, stop: Arc<AtomicBool>) 
     }
 }
 
-fn start_local_sampler(app: AppHandle) {
+fn start_local_sampler(app: AppHandle, users: Arc<Mutex<metrics::ActiveUsersTracker>>) {
     thread::spawn(move || {
         let mut sampler = metrics::LocalSampler::new();
         thread::sleep(Duration::from_millis(300));
         loop {
-            let snapshot = sampler.sample();
+            let needed = active_users_needed(&app);
+            let snapshot = {
+                let mut tracker = users
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                sampler.sample(&mut tracker, needed)
+            };
             if app.emit("metrics", &snapshot).is_err() {
                 break;
             }
@@ -429,7 +461,9 @@ pub fn run() {
         })
         .setup(|app| {
             let handle = app.handle().clone();
-            start_local_sampler(handle.clone());
+            let users_tracker = Arc::new(Mutex::new(metrics::ActiveUsersTracker::new()));
+            app.manage(ActiveUsersState(users_tracker.clone()));
+            start_local_sampler(handle.clone(), users_tracker);
             start_saved_server_pollers(handle);
             Ok(())
         })
