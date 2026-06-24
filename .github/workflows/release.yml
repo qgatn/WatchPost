@@ -1,45 +1,34 @@
 name: Release
 
-# Build installers for macOS (Apple Silicon + Intel) and Windows,
-# then publish them to a GitHub Release. Triggered when you push a version tag.
+# Build a Windows installer and publish it to a GitHub Release when you push a version tag.
+# macOS jobs can be added later when signing/notarization is set up.
 #
-#   git tag v0.1.0
-#   git push origin v0.1.0
+#   git tag v0.2.1
+#   git push origin v0.2.1
 #
-# The release is created as a DRAFT — review the attached installers, then
-# click "Publish release" so users can download them from the Releases page.
+# The release is created as a DRAFT — review the attached installer, then publish it.
+# The git tag is the source of truth: CI syncs version into manifests before building.
 #
 # Before pushing a tag, run locally:  npm run release:check
 
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
   workflow_dispatch: {}
 
 jobs:
   build:
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Apple Silicon — native on macos-latest (arm64 runner).
-          - platform: macos-latest
-            args: "--target aarch64-apple-darwin"
-            rust-target: aarch64-apple-darwin
-          # Intel Mac — macos-13 was retired Dec 2025; use macos-15-intel instead.
-          - platform: macos-15-intel
-            args: ""
-            rust-target: ""
-          - platform: windows-latest
-            args: ""
-            rust-target: ""
-
-    runs-on: ${{ matrix.platform }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Sync version from git tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: node scripts/sync-version.mjs "${{ github.ref_name }}"
 
       - name: Install Node
         uses: actions/setup-node@v6
@@ -48,10 +37,6 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Add Rust cross-target
-        if: matrix.rust-target != ''
-        run: rustup target add ${{ matrix.rust-target }}
 
       - name: Cache cargo
         uses: swatinem/rust-cache@v2
@@ -69,13 +54,11 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "WatchPost ${{ github.ref_name }}"
           releaseBody: |
-            Download the installer for your platform below.
+            Download the Windows installer below.
 
-            **macOS:** open the `.dmg`, drag WatchPost to Applications. If Gatekeeper blocks it, right-click → Open.
             **Windows:** run the `.msi` or `.exe`; click through SmartScreen if prompted.
 
             See [RELEASE.md](https://github.com/${{ github.repository }}/blob/main/wiki/RELEASE.md) for details.
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: false
-          args: ${{ matrix.args }}

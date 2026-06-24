@@ -49,6 +49,18 @@ export function removeServer(id: string): Promise<void> {
   return invoke("remove_server", { id });
 }
 
+export interface AppAbout {
+  product: string;
+  version: string;
+  author: string;
+  copyright: string;
+  build_utc: string;
+}
+
+export function getAppAbout(): Promise<AppAbout> {
+  return invoke<AppAbout>("get_app_about");
+}
+
 export function testServer(server: NewServer): Promise<TestResult> {
   return invoke<TestResult>("test_server", { server });
 }

@@ -107,10 +107,23 @@ function Add-ToSessionPath([string]$Dir) {
     }
 }
 
+function Import-CargoEnv {
+    $env:CARGO_HOME = $CargoHome
+    if (-not $env:RUSTUP_HOME) {
+        $env:RUSTUP_HOME = if ($env:WATCHPOST_RUSTUP_HOME) {
+            $env:WATCHPOST_RUSTUP_HOME
+        } else {
+            Join-Path $env:USERPROFILE ".rustup"
+        }
+    }
+    Add-ToSessionPath (Join-Path $CargoHome "bin")
+}
+
 function Refresh-Path {
+    if (-not $NodeInstallDir) { $NodeInstallDir = "C:\Program Files\nodejs" }
     Add-ToSessionPath $NodeInstallDir
     Add-ToSessionPath "C:\Program Files\nodejs"
-    Add-ToSessionPath (Join-Path $CargoHome "bin")
+    Import-CargoEnv
     Add-ToSessionPath "C:\Program Files\Git\cmd"
 }
 
@@ -135,8 +148,17 @@ function Test-HasNode {
 }
 
 function Test-HasRust {
-    Refresh-Path
-    return (Get-Command rustc -ErrorAction SilentlyContinue) -and (Get-Command cargo -ErrorAction SilentlyContinue)
+    Import-CargoEnv
+    if ((Get-Command rustc -ErrorAction SilentlyContinue) -and (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        return $true
+    }
+    $rustcExe = Join-Path $CargoHome "bin\rustc.exe"
+    $cargoExe = Join-Path $CargoHome "bin\cargo.exe"
+    if ((Test-Path $rustcExe) -and (Test-Path $cargoExe)) {
+        Add-ToSessionPath (Join-Path $CargoHome "bin")
+        return $true
+    }
+    return $false
 }
 
 function Test-HasGit {
@@ -323,9 +345,7 @@ function Step-Node {
 
 function Step-Rust {
     Write-Step "Rust (rustup)"
-    $env:CARGO_HOME = $CargoHome
-    $env:RUSTUP_HOME = if ($env:WATCHPOST_RUSTUP_HOME) { $env:WATCHPOST_RUSTUP_HOME } else { Join-Path $env:USERPROFILE ".rustup" }
-    Refresh-Path
+    Import-CargoEnv
     if (Test-HasRust) {
         Write-Ok "rustc — $(rustc --version)"
         Write-Ok "cargo — $(cargo --version)"
@@ -339,11 +359,13 @@ function Step-Rust {
         Write-WarnMsg "MSVC not detected — install Visual Studio Build Tools before Rust if rustup fails"
     }
     if (Invoke-WingetInstall -Id "Rustlang.Rustup" -Label "Rustup") {
-        Refresh-Path
+        Start-Sleep -Seconds 2
+        Import-CargoEnv
         if (Test-HasRust) {
             Write-Ok "rustc — $(rustc --version)"
             return
         }
+        Write-WarnMsg "Rustup installed via winget but not on PATH yet — running rustup-init to finish setup"
     }
     $init = Join-Path $DownloadDir "rustup-init.exe"
     $url = "https://win.rustup.rs/x86_64"
@@ -356,16 +378,17 @@ function Step-Rust {
     }
     Write-Step "Running rustup-init (default MSVC toolchain)"
     & $init -y --default-toolchain stable --default-host x86_64-pc-windows-msvc
-    Refresh-Path
+    Import-CargoEnv
     if (Test-HasRust) {
         Write-Ok "rustc — $(rustc --version)"
         Write-Ok "Cargo home: $CargoHome"
-    } else {
-        Write-Fail "Rust" "rustup finished but cargo not on PATH" @(
-            "Add to user Path: $CargoHome\bin",
-            "Then: rustup default stable-msvc"
-        )
+        return
     }
+    Write-Fail "Rust" "rustup finished but cargo not on PATH" @(
+        "Close and reopen PowerShell, then run: cargo --version",
+        "If missing, add to user Path: $CargoHome\bin",
+        "Then: rustup default stable-msvc"
+    )
 }
 
 function Step-Git {
@@ -392,6 +415,7 @@ function Step-Git {
 }
 
 function Show-Summary {
+    Import-CargoEnv
     Refresh-Path
     Write-Host ""
     Write-Host "================================" -ForegroundColor White
@@ -407,6 +431,21 @@ function Show-Summary {
 
     foreach ($c in $checks) {
         if ($c.Ok) { Write-Ok $c.Name } else { Write-Host "FAIL $($c.Name)" -ForegroundColor Red }
+    }
+
+    # Drop step failures that recovered after PATH refresh (common right after rustup).
+    if ($FailedSteps.Count -gt 0) {
+        $stillFailed = [System.Collections.Generic.List[string]]::new()
+        foreach ($s in $FailedSteps) {
+            $ok = $true
+            if ($s -like "Rust*") { $ok = Test-HasRust }
+            elseif ($s -like "Node*") { $ok = Test-HasNode }
+            elseif ($s -like "Git*") { $ok = Test-HasGit }
+            elseif ($s -like "WebView2*") { $ok = Test-HasWebView2 }
+            elseif ($s -like "Visual Studio*") { $ok = Test-HasMSVC }
+            if (-not $ok) { $stillFailed.Add($s) }
+        }
+        $script:FailedSteps = $stillFailed
     }
 
     if ($FailedSteps.Count -gt 0) {

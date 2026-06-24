@@ -1,6 +1,6 @@
 [package]
 name = "watchpost"
-version = "0.2.0"
+version = "0.2.1"
 description = "WatchPost - lightweight multi-server & local monitor"
 authors = ["Onasis Melchior"]
 edition = "2021"
@@ -27,4 +27,7 @@ serde_json = "1"
 sysinfo = "0.33"
 ssh2 = { version = "0.9", features = ["vendored-openssl"] }
 uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-autostart = "2"
 

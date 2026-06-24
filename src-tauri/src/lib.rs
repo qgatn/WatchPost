@@ -13,7 +13,11 @@ use store::{NewServer, ServerEntry, StackMode, WidgetPrefs};
 use tauri::RunEvent;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow, WindowEvent};
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use tauri_plugin_autostart::ManagerExt;
+
 static HIDING_MAIN: AtomicBool = AtomicBool::new(false);
+const AUTOSTART_ARG: &str = "--autostart";
 
 #[derive(Clone, serde::Serialize)]
 struct SourceStatus {
@@ -163,6 +167,59 @@ fn apply_widget_prefs_to_window(app: &AppHandle) -> Result<(), String> {
     apply_widget_stack_mode(&win, prefs.stack_mode)
 }
 
+fn launched_by_autostart() -> bool {
+    std::env::args().any(|a| a == AUTOSTART_ARG)
+}
+
+fn show_widget_window(app: &AppHandle) -> Result<(), String> {
+    let win = app
+        .get_webview_window("widget")
+        .ok_or_else(|| "widget window not found".to_string())?;
+    let prefs = store::load_widget_prefs(data_dir(app)?)?;
+    apply_widget_stack_mode(&win, prefs.stack_mode)?;
+    win.show().map_err(|e| e.to_string())?;
+    let _ = app.emit("widget-shown", ());
+    Ok(())
+}
+
+fn apply_autostart_launch(app: &AppHandle) -> Result<(), String> {
+    let prefs = store::load_widget_prefs(data_dir(app)?).unwrap_or_default();
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.hide();
+    }
+    if prefs.show_widget_on_startup {
+        show_widget_window(app)?;
+    } else if let Some(main) = app.get_webview_window("main") {
+        main.show().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn sync_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    if enabled {
+        app.autolaunch().enable().map_err(|e| e.to_string())?;
+    } else {
+        app.autolaunch().disable().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn sync_autostart(_app: &AppHandle, _enabled: bool) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn read_autostart_enabled(app: &AppHandle) -> Option<bool> {
+    app.autolaunch().is_enabled().ok()
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn read_autostart_enabled(_app: &AppHandle) -> Option<bool> {
+    None
+}
+
 #[derive(Serialize)]
 struct SshSetupInfo {
     has_public_key: bool,
@@ -269,12 +326,20 @@ fn get_ssh_setup_info() -> SshSetupInfo {
 
 #[tauri::command]
 fn get_widget_prefs(app: AppHandle) -> Result<WidgetPrefs, String> {
-    store::load_widget_prefs(data_dir(&app)?)
+    let mut prefs = store::load_widget_prefs(data_dir(&app)?)?;
+    if let Some(enabled) = read_autostart_enabled(&app) {
+        prefs.launch_at_login = enabled;
+    }
+    Ok(prefs)
 }
 
 #[tauri::command]
 fn set_widget_prefs(app: AppHandle, prefs: WidgetPrefs) -> Result<(), String> {
+    let prev = store::load_widget_prefs(data_dir(&app)?).ok();
     store::save_widget_prefs(data_dir(&app)?, &prefs)?;
+    if prev.map(|p| p.launch_at_login) != Some(prefs.launch_at_login) {
+        sync_autostart(&app, prefs.launch_at_login)?;
+    }
     apply_widget_prefs_to_window(&app)?;
     if prefs.segments.users {
         invalidate_active_users(&app);
@@ -327,10 +392,7 @@ fn toggle_widget(app: AppHandle) -> Result<bool, String> {
         hide_widget_window(&app)?;
         Ok(false)
     } else {
-        let prefs = store::load_widget_prefs(data_dir(&app)?)?;
-        apply_widget_stack_mode(&win, prefs.stack_mode)?;
-        win.show().map_err(|e| e.to_string())?;
-        let _ = app.emit("widget-shown", ());
+        show_widget_window(&app)?;
         Ok(true)
     }
 }
@@ -429,6 +491,11 @@ fn start_saved_server_pollers(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args([AUTOSTART_ARG])
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .manage(PollerRegistry::new())
         .invoke_handler(tauri::generate_handler![
@@ -464,7 +531,10 @@ pub fn run() {
             let users_tracker = Arc::new(Mutex::new(metrics::ActiveUsersTracker::new()));
             app.manage(ActiveUsersState(users_tracker.clone()));
             start_local_sampler(handle.clone(), users_tracker);
-            start_saved_server_pollers(handle);
+            start_saved_server_pollers(handle.clone());
+            if launched_by_autostart() {
+                let _ = apply_autostart_launch(&handle);
+            }
             Ok(())
         })
         .build(tauri::generate_context!())

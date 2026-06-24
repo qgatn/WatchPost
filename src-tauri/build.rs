@@ -28,12 +28,23 @@ fn main() {
         );
     }
 
+    let pkg_text = fs::read_to_string(root.join("../package.json")).expect("read package.json");
+    let pkg: serde_json::Value = serde_json::from_str(&pkg_text).expect("parse package.json");
+    let pkg_version = pkg["version"]
+        .as_str()
+        .expect("package.json missing version");
+    if pkg_version != version {
+        panic!(
+            "version mismatch: tauri.conf.json={version} package.json={pkg_version} — run: node scripts/sync-version.mjs {version}"
+        );
+    }
+
     let meta_text = fs::read_to_string(root.join("app-meta.json")).expect("read app-meta.json");
     let meta: serde_json::Value = serde_json::from_str(&meta_text).expect("parse app-meta.json");
-    let author = meta["author"].as_str().expect("app-meta.json missing author");
-    let copyright = meta["copyright"]
+    let author = meta["author"]
         .as_str()
-        .unwrap_or(author);
+        .expect("app-meta.json missing author");
+    let copyright = meta["copyright"].as_str().unwrap_or(author);
 
     let build_utc = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
@@ -58,6 +69,7 @@ fn main() {
     println!("cargo:rerun-if-changed=tauri.conf.json");
     println!("cargo:rerun-if-changed=app-meta.json");
     println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rerun-if-changed=../package.json");
 
     println!("cargo:rustc-env=WATCHPOST_VERSION={version}");
     println!("cargo:rustc-env=WATCHPOST_AUTHOR={author}");

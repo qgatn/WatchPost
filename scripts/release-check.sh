@@ -5,6 +5,17 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+echo "==> Version manifests"
+node -e "
+const fs=require('fs');
+const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
+const tauri=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
+const cargo=fs.readFileSync('src-tauri/Cargo.toml','utf8').match(/^version = \"([^\"]+)\"/m)?.[1];
+const v=pkg.version;
+if(tauri.version!==v||cargo!==v){console.error('Version mismatch — run: node scripts/sync-version.mjs',v);process.exit(1)}
+console.log('OK  version',v);
+"
+
 echo "==> Frontend + Rust tests"
 npm test
 

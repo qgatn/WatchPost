@@ -5,6 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+CARGO_HOME="${WATCHPOST_CARGO_HOME:-$HOME/.cargo}"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -12,24 +14,45 @@ NC='\033[0m'
 
 missing=0
 
+apply_path() {
+  if [ -d "/opt/homebrew/bin" ]; then
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+  fi
+  if [ -d "/usr/local/bin" ]; then
+    export PATH="/usr/local/bin:$PATH"
+  fi
+  if [ -d "$CARGO_HOME/bin" ]; then
+    export PATH="$CARGO_HOME/bin:$PATH"
+  fi
+  if [ -f "$CARGO_HOME/env" ]; then
+    # shellcheck source=/dev/null
+    source "$CARGO_HOME/env"
+  fi
+}
+
 check() {
   local label="$1"
   local cmd="$2"
   if command -v "$cmd" >/dev/null 2>&1; then
     echo -e "${GREEN}✓${NC} $label — $("$cmd" --version 2>&1 | head -n1)"
-  else
-    echo -e "${RED}✗${NC} $label — not found"
-    missing=1
+    return 0
   fi
+  if [ "$cmd" = "cargo" ] || [ "$cmd" = "rustc" ]; then
+    local exe="$CARGO_HOME/bin/$cmd"
+    if [ -x "$exe" ]; then
+      export PATH="$CARGO_HOME/bin:$PATH"
+      echo -e "${GREEN}✓${NC} $label — $("$exe" --version 2>&1 | head -n1)"
+      return 0
+    fi
+  fi
+  echo -e "${RED}✗${NC} $label — not found"
+  missing=1
 }
+
+apply_path
 
 echo "WatchPost setup (macOS / Linux)"
 echo "================================"
-
-# Prefer Homebrew paths on Mac when present
-if [ -d "/opt/homebrew/bin" ]; then
-  export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
-fi
 
 check "Node.js" node
 check "npm" npm
@@ -58,4 +81,4 @@ echo -e "${GREEN}Setup complete.${NC}"
 echo ""
 echo "  Run the app:     npm run start"
 echo "  Run tests:       npm test"
-echo "  Build installer: npm run tauri build"
+echo "  Build installer: npm run package"

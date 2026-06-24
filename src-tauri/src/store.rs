@@ -80,7 +80,10 @@ pub fn add_server(base: PathBuf, new: NewServer) -> Result<ServerEntry, String> 
         port: new.port,
         user: new.user.trim().to_string(),
         auth: new.auth,
-        key_path: new.key_path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()),
+        key_path: new
+            .key_path
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty()),
     };
     servers.push(entry.clone());
     save_servers(base, &servers)?;
@@ -169,6 +172,16 @@ pub struct WidgetPrefs {
     pub segments: WidgetSegments,
     #[serde(default)]
     pub display: WidgetDisplay,
+    /// User preference; OS login-item state is synced via autostart plugin on read/write.
+    #[serde(default)]
+    pub launch_at_login: bool,
+    /// When launched at login (`--autostart`): widget only if true, main dashboard if false.
+    #[serde(default = "default_show_widget_on_startup")]
+    pub show_widget_on_startup: bool,
+}
+
+fn default_show_widget_on_startup() -> bool {
+    true
 }
 
 impl Default for WidgetPrefs {
@@ -177,6 +190,8 @@ impl Default for WidgetPrefs {
             stack_mode: StackMode::default(),
             segments: WidgetSegments::default(),
             display: WidgetDisplay::default(),
+            launch_at_login: false,
+            show_widget_on_startup: true,
         }
     }
 }
@@ -240,7 +255,16 @@ mod tests {
                 users: false,
             },
             display: WidgetDisplay::default(),
+            launch_at_login: false,
+            show_widget_on_startup: true,
         };
         assert!(validate_widget_prefs(&prefs).is_err());
+    }
+
+    #[test]
+    fn widget_prefs_startup_defaults() {
+        let prefs = WidgetPrefs::default();
+        assert!(!prefs.launch_at_login);
+        assert!(prefs.show_widget_on_startup);
     }
 }

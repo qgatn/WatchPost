@@ -10,6 +10,7 @@
     "core:window:allow-set-always-on-bottom",
     "core:window:allow-set-always-on-top",
     "core:window:allow-set-size",
-    "opener:default"
+    "opener:default",
+    "autostart:default"
   ]
 }

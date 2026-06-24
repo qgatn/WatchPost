@@ -1,6 +1,6 @@
 //! Step-by-step SSH + metrics diagnostics for the UI log.
 
-use super::{connect_session_for, exec_capture, collect_linux_metrics};
+use super::{collect_linux_metrics, connect_session_for, exec_capture};
 use crate::store::ServerEntry;
 use serde::Serialize;
 use std::net::ToSocketAddrs;
@@ -38,7 +38,12 @@ pub fn diagnose_connection(entry: &ServerEntry) -> DiagnoseResult {
                 a
             }
             None => {
-                step(&mut steps, "Resolve host", false, format!("no address for {addr}"));
+                step(
+                    &mut steps,
+                    "Resolve host",
+                    false,
+                    format!("no address for {addr}"),
+                );
                 return DiagnoseResult { ok: false, steps };
             }
         },

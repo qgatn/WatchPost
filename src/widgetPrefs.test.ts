@@ -17,6 +17,11 @@ describe("widget prefs validation helpers", () => {
     expect(DEFAULT_WIDGET_PREFS.display.cpu).toBe("both");
   });
 
+  it("defaults startup prefs", () => {
+    expect(DEFAULT_WIDGET_PREFS.launch_at_login).toBe(false);
+    expect(DEFAULT_WIDGET_PREFS.show_widget_on_startup).toBe(true);
+  });
+
   it("cloneWidgetPrefs deep-copies nested fields", () => {
     const copy = cloneWidgetPrefs(DEFAULT_WIDGET_PREFS);
     copy.display.cpu = "number";

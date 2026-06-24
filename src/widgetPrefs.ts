@@ -21,6 +21,8 @@ export interface WidgetPrefs {
   stack_mode: StackMode;
   segments: WidgetSegments;
   display: WidgetDisplay;
+  launch_at_login: boolean;
+  show_widget_on_startup: boolean;
 }
 
 export const METRIC_SEGMENT_KEYS = ["cpu", "mem", "disk", "net", "users"] as const;
@@ -45,6 +47,8 @@ export const DEFAULT_WIDGET_PREFS: WidgetPrefs = {
   stack_mode: "behind",
   segments: { cpu: true, mem: true, disk: true, net: true, users: false },
   display: { ...DEFAULT_WIDGET_DISPLAY },
+  launch_at_login: false,
+  show_widget_on_startup: true,
 };
 
 export function cloneWidgetPrefs(prefs: WidgetPrefs): WidgetPrefs {
@@ -52,6 +56,8 @@ export function cloneWidgetPrefs(prefs: WidgetPrefs): WidgetPrefs {
     stack_mode: prefs.stack_mode,
     segments: { ...prefs.segments },
     display: { ...prefs.display },
+    launch_at_login: prefs.launch_at_login,
+    show_widget_on_startup: prefs.show_widget_on_startup,
   };
 }
 

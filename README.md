@@ -6,10 +6,12 @@ Built with [Tauri](https://tauri.app/) (Rust + system webview). macOS and Window
 
 ## Features
 
-- Local system metrics
-- Configurable desktop widget (stack position, metrics, display style)
-- Remote Linux servers over SSH (add-server wizard, diagnostics)
-- Low footprint — timer-driven sampling, no bundled browser
+- **Local metrics** — CPU, memory, disk, network, and active users for your PC
+- **Desktop widget** — frameless strip with configurable stack position, metrics, and display style
+- **Remote Linux servers** — SSH monitoring with add-server wizard and diagnostics (no agent on the server)
+- **Settings** — General (about, launch at login), Widget preferences, and server management (add / remove)
+- **Launch at login** — optional autostart on Windows and macOS; open the app or widget only
+- **Low footprint** — timer-driven sampling, no bundled browser
 
 ## Quick start
 
@@ -33,7 +35,19 @@ npm run start    # development mode (first run compiles Rust — several minutes
 
 Full detail, path options, and manual fallback: **[wiki/Build-from-source.md](wiki/Build-from-source.md)**.
 
-SSH agent setup for remote servers: **[wiki/FAQ.md](wiki/FAQ.md)**.
+SSH setup for remote servers: **[wiki/FAQ.md](wiki/FAQ.md)**.
+
+## Using the app
+
+| Action | Where |
+|--------|--------|
+| Switch source (Local / server) | Top bar dropdown |
+| Add SSH server | **+ Add server** or **Settings → Servers** |
+| Remove SSH server | **Settings → Servers → Remove** |
+| Widget options | **Settings → Widget** |
+| Launch at login | **Settings → General** |
+| About / version | **Settings → General** |
+| Diagnostics | **Diagnostics** (when a remote server is selected) |
 
 ## Commands
 

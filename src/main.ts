@@ -23,8 +23,10 @@ import {
   copyText,
   diagnoseServer,
   entryToNewServer,
+  getAppAbout,
   getSshSetupInfo,
   listServers,
+  removeServer,
   testServer,
   type DiagnoseResult,
   type NewServer,
@@ -76,6 +78,14 @@ interface Snapshot {
   uptime_secs: number;
   active_users: number;
   ts_ms: number;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function drawSpark(
@@ -242,7 +252,7 @@ function renderMain(root: HTMLElement) {
           <span class="status-pill"><span class="dot" id="status-dot"></span><span id="status-text">live</span></span>
           <button type="button" id="add-server-btn" class="btn-ghost">+ Add server</button>
           <button type="button" id="diag-btn" class="btn-ghost hidden">Diagnostics</button>
-          <button type="button" id="widget-settings-btn" class="btn-ghost btn-icon" title="Widget settings" aria-label="Widget settings">⚙</button>
+          <button type="button" id="settings-btn" class="btn-ghost btn-icon" title="Settings" aria-label="Settings">⚙</button>
           <button type="button" id="widget-btn">Open Widget</button>
         </div>
       </div>
@@ -258,52 +268,96 @@ function renderMain(root: HTMLElement) {
         </div>
         <pre class="diag-log" id="diag-log"></pre>
       </div>
-      <div id="widget-settings-modal" class="modal hidden" aria-hidden="true">
-        <div class="modal-backdrop" data-close-widget-settings></div>
-        <div class="modal-panel widget-settings-panel" role="dialog" aria-labelledby="widget-settings-title">
+      <div id="settings-modal" class="modal hidden" aria-hidden="true">
+        <div class="modal-backdrop" data-close-settings></div>
+        <div class="modal-panel settings-panel" role="dialog" aria-labelledby="settings-title">
           <div class="modal-panel-header">
-            <h2 id="widget-settings-title">Widget settings</h2>
+            <h2 id="settings-title">Settings</h2>
           </div>
-          <div class="modal-panel-scroll">
-          <div class="settings-section">
-            <h3>Widget position</h3>
-            <div class="seg-control" id="stack-mode-control" role="radiogroup" aria-label="Widget position">
-              <button type="button" class="seg-opt" data-stack="behind">Behind</button>
-              <button type="button" class="seg-opt" data-stack="normal">Normal</button>
-              <button type="button" class="seg-opt" data-stack="on_top">On top</button>
-            </div>
-            <p class="modal-hint" id="stack-mode-hint"></p>
-          </div>
-          <div class="settings-section">
-            <h3>Show on widget</h3>
-            <div class="checkbox-grid" id="segment-toggles">
-              <label><input type="checkbox" data-seg="cpu" /> CPU</label>
-              <label><input type="checkbox" data-seg="mem" /> Memory</label>
-              <label><input type="checkbox" data-seg="disk" /> Disk</label>
-              <label><input type="checkbox" data-seg="net" /> Network</label>
-              <label><input type="checkbox" data-seg="users" /> Users</label>
-            </div>
-          </div>
-          <div class="settings-section">
-            <h3>Metric style</h3>
-            <p class="modal-hint">CPU and memory show as percent (e.g. 14%). Storage can show used/total, a bar, or both.</p>
-            <div class="display-style-list" id="display-style-list">
-              ${DISPLAY_SEGMENT_KEYS.map(
-                (key) => `
-              <div class="display-style-row" data-display-row="${key}">
-                <span class="display-style-label">${DISPLAY_SEGMENT_LABELS[key]}</span>
-                <div class="seg-control seg-control-compact" role="radiogroup" aria-label="${DISPLAY_SEGMENT_LABELS[key]} display">
-                  <button type="button" class="seg-opt" data-display="${key}" data-mode="number">Number</button>
-                  <button type="button" class="seg-opt" data-display="${key}" data-mode="bar">Bar</button>
-                  <button type="button" class="seg-opt" data-display="${key}" data-mode="both">Both</button>
+          <div class="settings-layout">
+            <nav class="settings-tabs" role="tablist" aria-label="Settings sections">
+              <button type="button" class="settings-tab active" data-settings-tab="general" role="tab">General</button>
+              <button type="button" class="settings-tab" data-settings-tab="widget" role="tab">Widget</button>
+              <button type="button" class="settings-tab" data-settings-tab="servers" role="tab">Servers</button>
+            </nav>
+            <div class="modal-panel-scroll settings-tab-panels">
+              <div class="settings-tab-panel" data-settings-panel="general" role="tabpanel">
+                <div class="settings-section">
+                  <h3>About</h3>
+                  <div class="about-block" id="about-block">
+                    <p class="about-product" id="about-product">WatchPost</p>
+                    <p class="about-meta" id="about-version">Version —</p>
+                    <p class="about-meta" id="about-author">—</p>
+                    <p class="about-meta about-muted" id="about-build">—</p>
+                  </div>
                 </div>
-              </div>`,
-              ).join("")}
+                <div class="settings-section">
+                  <h3>Startup</h3>
+                  <div class="checkbox-grid checkbox-grid-single">
+                    <label><input type="checkbox" id="pref-launch-at-login" /> Start WatchPost when you log in</label>
+                  </div>
+                  <div class="settings-subsection" id="autostart-open-wrap">
+                    <p class="modal-hint settings-subhead">When starting at login, open:</p>
+                    <div class="seg-control" id="autostart-open-control" role="radiogroup" aria-label="Open at login">
+                      <button type="button" class="seg-opt" data-autostart-open="widget">Widget only</button>
+                      <button type="button" class="seg-opt" data-autostart-open="main">App</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="settings-tab-panel hidden" data-settings-panel="widget" role="tabpanel">
+                <div class="settings-section">
+                  <h3>Widget position</h3>
+                  <div class="seg-control" id="stack-mode-control" role="radiogroup" aria-label="Widget position">
+                    <button type="button" class="seg-opt" data-stack="behind">Behind</button>
+                    <button type="button" class="seg-opt" data-stack="normal">Normal</button>
+                    <button type="button" class="seg-opt" data-stack="on_top">On top</button>
+                  </div>
+                  <p class="modal-hint" id="stack-mode-hint"></p>
+                </div>
+                <div class="settings-section">
+                  <h3>Show on widget</h3>
+                  <div class="checkbox-grid" id="segment-toggles">
+                    <label><input type="checkbox" data-seg="cpu" /> CPU</label>
+                    <label><input type="checkbox" data-seg="mem" /> Memory</label>
+                    <label><input type="checkbox" data-seg="disk" /> Disk</label>
+                    <label><input type="checkbox" data-seg="net" /> Network</label>
+                    <label><input type="checkbox" data-seg="users" /> Users</label>
+                  </div>
+                </div>
+                <div class="settings-section">
+                  <h3>Metric style</h3>
+                  <p class="modal-hint">CPU and memory show as percent (e.g. 14%). Storage can show used/total, a bar, or both.</p>
+                  <div class="display-style-list" id="display-style-list">
+                    ${DISPLAY_SEGMENT_KEYS.map(
+                      (key) => `
+                    <div class="display-style-row" data-display-row="${key}">
+                      <span class="display-style-label">${DISPLAY_SEGMENT_LABELS[key]}</span>
+                      <div class="seg-control seg-control-compact" role="radiogroup" aria-label="${DISPLAY_SEGMENT_LABELS[key]} display">
+                        <button type="button" class="seg-opt" data-display="${key}" data-mode="number">Number</button>
+                        <button type="button" class="seg-opt" data-display="${key}" data-mode="bar">Bar</button>
+                        <button type="button" class="seg-opt" data-display="${key}" data-mode="both">Both</button>
+                      </div>
+                    </div>`,
+                    ).join("")}
+                  </div>
+                </div>
+              </div>
+              <div class="settings-tab-panel hidden" data-settings-panel="servers" role="tabpanel">
+                <div class="settings-section">
+                  <div class="servers-toolbar">
+                    <h3>Saved SSH servers</h3>
+                    <button type="button" id="servers-add-btn" class="btn-ghost">+ Add server</button>
+                  </div>
+                  <p class="modal-hint">Add or remove servers monitored by WatchPost. Removing stops polling and deletes the entry on this device.</p>
+                  <div id="servers-list" class="servers-list"></div>
+                  <p class="modal-hint hidden" id="servers-empty">No saved servers yet.</p>
+                </div>
+              </div>
             </div>
-          </div>
           </div>
           <div class="modal-footer">
-            <button type="button" id="widget-settings-done">Done</button>
+            <button type="button" id="settings-done">Done</button>
           </div>
         </div>
       </div>
@@ -581,6 +635,102 @@ function renderMain(root: HTMLElement) {
     const modal = $("add-server-modal");
     modal.classList.add("hidden");
     modal.setAttribute("aria-hidden", "true");
+    returnToSettingsServers = false;
+  }
+
+  type SettingsTab = "general" | "widget" | "servers";
+  let settingsTab: SettingsTab = "general";
+  let returnToSettingsServers = false;
+
+  function setSettingsTab(tab: SettingsTab) {
+    settingsTab = tab;
+    document.querySelectorAll<HTMLButtonElement>(".settings-tab").forEach((btn) => {
+      const id = btn.getAttribute("data-settings-tab") as SettingsTab;
+      const active = id === tab;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    document.querySelectorAll<HTMLElement>("[data-settings-panel]").forEach((panel) => {
+      panel.classList.toggle("hidden", panel.getAttribute("data-settings-panel") !== tab);
+    });
+  }
+
+  function syncGeneralSettingsUi() {
+    const launchEnabled = widgetPrefs.launch_at_login;
+    ($("pref-launch-at-login") as HTMLInputElement).checked = launchEnabled;
+    document.querySelectorAll<HTMLButtonElement>("#autostart-open-control .seg-opt").forEach((btn) => {
+      const openWidget = btn.getAttribute("data-autostart-open") === "widget";
+      const active = widgetPrefs.show_widget_on_startup ? openWidget : !openWidget;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-checked", active ? "true" : "false");
+      btn.disabled = !launchEnabled;
+    });
+    $("autostart-open-wrap").classList.toggle("disabled", !launchEnabled);
+  }
+
+  async function loadAboutBlock() {
+    try {
+      const about = await getAppAbout();
+      $("about-product").textContent = about.product;
+      $("about-version").textContent = `Version ${about.version}`;
+      $("about-author").textContent = about.copyright || about.author;
+      $("about-build").textContent = `Built ${about.build_utc} UTC`;
+    } catch {
+      $("about-product").textContent = "WatchPost";
+      $("about-version").textContent = "Version unavailable";
+      $("about-author").textContent = "";
+      $("about-build").textContent = "";
+    }
+  }
+
+  function renderServersList(servers: ServerEntry[]) {
+    const list = $("servers-list");
+    const empty = $("servers-empty");
+    list.innerHTML = "";
+    empty.classList.toggle("hidden", servers.length > 0);
+    for (const s of servers) {
+      const row = document.createElement("div");
+      row.className = "server-row";
+      row.dataset.serverId = s.id;
+      row.innerHTML = `
+        <div class="server-row-info">
+          <span class="server-alias">${escapeHtml(s.alias)}</span>
+          <span class="server-detail">${escapeHtml(s.user)}@${escapeHtml(s.host)}:${s.port}</span>
+        </div>
+        <button type="button" class="btn-ghost btn-danger server-remove">Remove</button>`;
+      row.querySelector(".server-remove")?.addEventListener("click", () => {
+        void handleRemoveServer(s);
+      });
+      list.appendChild(row);
+    }
+  }
+
+  async function handleRemoveServer(entry: ServerEntry) {
+    const ok = confirm(
+      `Remove "${entry.alias}" (${entry.user}@${entry.host}:${entry.port})?\n\nThis stops monitoring and removes the server from WatchPost.`,
+    );
+    if (!ok) return;
+    try {
+      await removeServer(entry.id);
+      if (selectedSource === entry.alias) {
+        selectedSource = "local";
+        const sel = $("source-select") as HTMLSelectElement;
+        sel.value = "local";
+        updateDiagButtonVisibility();
+        cpuHist.clear();
+        netRxHist.clear();
+        netTxHist.clear();
+        netTotalHist.clear();
+        coresBuilt = 0;
+        lastCoreCount = 0;
+        const cached = snapshotsBySource.get("local");
+        if (cached) applySnapshot(cached);
+      }
+      await loadServersList();
+      renderServersList(savedServers);
+    } catch (e) {
+      alert(`Could not remove server: ${e}`);
+    }
   }
 
   function syncWidgetSettingsUi() {
@@ -607,15 +757,20 @@ function renderMain(root: HTMLElement) {
     });
   }
 
-  function openWidgetSettings() {
+  async function openSettings(tab: SettingsTab = "general") {
+    setSettingsTab(tab);
+    syncGeneralSettingsUi();
     syncWidgetSettingsUi();
-    const modal = $("widget-settings-modal");
+    void loadAboutBlock();
+    await loadServersList();
+    renderServersList(savedServers);
+    const modal = $("settings-modal");
     modal.classList.remove("hidden");
     modal.setAttribute("aria-hidden", "false");
   }
 
-  function closeWidgetSettings() {
-    const modal = $("widget-settings-modal");
+  function closeSettings() {
+    const modal = $("settings-modal");
     modal.classList.add("hidden");
     modal.setAttribute("aria-hidden", "true");
   }
@@ -762,10 +917,19 @@ function renderMain(root: HTMLElement) {
   listen("widget-shown", () => syncWidgetButton(true));
   listen("widget-hidden", () => syncWidgetButton(false));
 
-  $("widget-settings-btn").addEventListener("click", () => openWidgetSettings());
-  $("widget-settings-done").addEventListener("click", () => closeWidgetSettings());
-  document.querySelectorAll("[data-close-widget-settings]").forEach((el) => {
-    el.addEventListener("click", () => closeWidgetSettings());
+  $("settings-btn").addEventListener("click", () => {
+    void openSettings("general");
+  });
+  $("settings-done").addEventListener("click", () => closeSettings());
+  document.querySelectorAll("[data-close-settings]").forEach((el) => {
+    el.addEventListener("click", () => closeSettings());
+  });
+
+  document.querySelectorAll(".settings-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tab = btn.getAttribute("data-settings-tab") as SettingsTab;
+      setSettingsTab(tab);
+    });
   });
 
   document.querySelectorAll("#stack-mode-control .seg-opt").forEach((btn) => {
@@ -799,17 +963,44 @@ function renderMain(root: HTMLElement) {
     });
   });
 
+  $("pref-launch-at-login").addEventListener("change", () => {
+    const enabled = ($("pref-launch-at-login") as HTMLInputElement).checked;
+    applyWidgetPrefs({ ...widgetPrefs, launch_at_login: enabled }).catch(() => {});
+  });
+
+  document.querySelectorAll("#autostart-open-control .seg-opt").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!widgetPrefs.launch_at_login) return;
+      const openWidget = btn.getAttribute("data-autostart-open") === "widget";
+      applyWidgetPrefs({ ...widgetPrefs, show_widget_on_startup: openWidget }).catch(() => {});
+    });
+  });
+
+  $("servers-add-btn").addEventListener("click", () => {
+    returnToSettingsServers = true;
+    closeSettings();
+    openModal();
+  });
+
   listen<WidgetPrefs>("widget-prefs-changed", (e) => {
     widgetPrefs = cloneWidgetPrefs(e.payload);
+    syncGeneralSettingsUi();
     syncWidgetSettingsUi();
   });
 
   getWidgetPrefs()
     .then((prefs) => {
       widgetPrefs = cloneWidgetPrefs(prefs);
+      syncGeneralSettingsUi();
       syncWidgetSettingsUi();
     })
     .catch(() => {});
+
+  listen("servers-changed", () => {
+    loadServersList()
+      .then(() => renderServersList(savedServers))
+      .catch(() => {});
+  });
 
   $("source-select").addEventListener("change", () => {
     selectedSource = ($("source-select") as HTMLSelectElement).value;
@@ -938,6 +1129,10 @@ function renderMain(root: HTMLElement) {
       await addServer(form);
       await loadServersList();
       closeModal();
+      if (returnToSettingsServers) {
+        returnToSettingsServers = false;
+        void openSettings("servers");
+      }
     } catch (e) {
       alert(String(e));
     }

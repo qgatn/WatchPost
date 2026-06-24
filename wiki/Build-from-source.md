@@ -38,6 +38,8 @@ npm run setup
 npm run start
 ```
 
+Run **`npm run setup` in the same PowerShell window** after the prerequisite script finishes — both scripts add Rust/Node to the session PATH. If you open a new terminal instead, `cargo` should still work once rustup has updated your user PATH.
+
 ### Script options
 
 Each failed step prints what went wrong and manual fallback links. Re-run after fixing the issue.
@@ -83,7 +85,9 @@ cd WatchPost
 npm run setup
 ```
 
-Checks `node`, `npm`, `cargo`, and `rustc`, then runs `npm install`. On Windows, if execution policy blocks npm:
+Checks `node`, `npm`, `cargo`, and `rustc`, then runs `npm install`. The setup scripts add `~/.cargo/bin` (or `%USERPROFILE%\.cargo\bin`) to the **current session** so you can continue immediately after installing Rust.
+
+On Windows, if execution policy blocks npm:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
@@ -103,9 +107,13 @@ npm run package    # installer under src-tauri/target/release/bundle/
 | Windows | `bundle/nsis/*-setup.exe`, `bundle/msi/*.msi` |
 | macOS | `bundle/macos/WatchPost.app`, `bundle/dmg/*.dmg` |
 
-Local builds are **unsigned**. Expect Gatekeeper or SmartScreen prompts. Colleagues need the same OS/architecture and SSH agent setup for remote servers ([FAQ](FAQ.md)).
+Local builds are **unsigned**. Expect Gatekeeper or SmartScreen prompts. Colleagues need the same OS/architecture and SSH setup for remote servers ([FAQ](FAQ.md)).
 
-Version and author are embedded at build time from `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `src-tauri/app-meta.json`. Bump all three version fields together before tagging.
+Version and author are embedded at build time from `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `src-tauri/app-meta.json`. Keep them in sync:
+
+```bash
+node scripts/sync-version.mjs 0.2.1
+```
 
 **macOS quarantine** (unsigned local build):
 
@@ -146,12 +154,14 @@ where.exe cl; node --version; cargo --version; git --version
 
 | Symptom | What to do |
 |---------|------------|
-| `npm run setup` reports MISSING | Run the prerequisite script again or install manually; **open a new terminal** |
+| Prerequisite script says Rust failed, summary says Rust OK | Re-run `npm run setup` in the **same** window, or open a new terminal — rustup may have installed but PATH was not refreshed yet |
+| `npm run setup` reports MISSING cargo/rustc | Run the prerequisite script again, then `npm run setup` without closing the terminal |
 | macOS `node: command not found` | `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"` or reinstall Node |
 | Windows `link.exe` not found | Reinstall C++ workload, reboot, `rustup default stable-msvc` |
 | First Rust compile very slow | Normal — later builds are incremental |
-| SSH works in terminal, not in app | [FAQ — SSH](FAQ.md) — load key into agent (`ssh-add`) |
+| SSH works in PowerShell, not in WatchPost | [FAQ — SSH](FAQ.md) — agent empty; app also tries default key files in `%USERPROFILE%\.ssh` |
 | SmartScreen on your own `.exe` | **More info → Run anyway**, or use `npm run start` without packaging |
+| Launch at login does nothing in dev | Autostart registers the packaged `.app` / `.exe` — use `npm run package` and install that build |
 
 ---
 

@@ -93,8 +93,16 @@ apply_path() {
   fi
   if [ -d "$CARGO_HOME/bin" ]; then
     export PATH="$CARGO_HOME/bin:$PATH"
+  elif [ -d "$HOME/.cargo/bin" ]; then
+    export PATH="$HOME/.cargo/bin:$PATH"
   fi
-  # Common Node.js installer location
+  if [ -f "$CARGO_HOME/env" ]; then
+    # shellcheck source=/dev/null
+    source "$CARGO_HOME/env"
+  elif [ -f "$HOME/.cargo/env" ]; then
+    # shellcheck source=/dev/null
+    source "$HOME/.cargo/env"
+  fi
   export PATH="/usr/local/bin:$PATH"
 }
 
@@ -139,6 +147,7 @@ have_xcode_clt() {
 }
 
 have_node() {
+  apply_path
   command -v node &>/dev/null && command -v npm &>/dev/null || return 1
   local major
   major="$(node_major_version)"
@@ -146,7 +155,11 @@ have_node() {
 }
 
 have_rust() {
-  command -v rustc &>/dev/null && command -v cargo &>/dev/null
+  apply_path
+  if command -v rustc &>/dev/null && command -v cargo &>/dev/null; then
+    return 0
+  fi
+  [ -x "$CARGO_HOME/bin/rustc" ] && [ -x "$CARGO_HOME/bin/cargo" ]
 }
 
 fetch_node_lts_version() {
@@ -308,6 +321,18 @@ print_summary() {
   fi
   if [ "$SKIP_RUST" -eq 0 ]; then
     have_rust && log_ok "Rust $(rustc --version 2>/dev/null)" || { log_fail "Rust"; all_ok=0; }
+  fi
+  if [ "${#FAILED_STEPS[@]}" -gt 0 ]; then
+    local still_failed=()
+    for s in "${FAILED_STEPS[@]}"; do
+      case "$s" in
+        Rust*) have_rust || still_failed+=("$s") ;;
+        Node*) have_node || still_failed+=("$s") ;;
+        Xcode*) have_xcode_clt || still_failed+=("$s") ;;
+        *) still_failed+=("$s") ;;
+      esac
+    done
+    FAILED_STEPS=("${still_failed[@]}")
   fi
   if [ "${#FAILED_STEPS[@]}" -gt 0 ]; then
     echo ""

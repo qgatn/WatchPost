@@ -4,7 +4,7 @@
 
 ### Authentication model
 
-WatchPost uses **SSH public-key authentication** through the **OpenSSH agent**. It does not accept passwords or pasted private keys.
+WatchPost uses **SSH public-key authentication** through the **OpenSSH agent**, with a fallback to default key files on disk (same as the OpenSSH CLI). It does not accept passwords or pasted private keys.
 
 Install your **public key** on the server first (`ssh-copy-id` or `authorized_keys`). The private key stays on your PC.
 
@@ -17,9 +17,10 @@ Password auth may be added later; key-based auth via the agent is the supported 
 | Step | What | Where |
 |------|------|--------|
 | 1 | **Public** key on the server | `authorized_keys` (one-time) |
-| 2 | **Private** key in the **OpenSSH agent** | `ssh-add` on your machine |
+| 2 | **Private** key in the **OpenSSH agent** (preferred) | `ssh-add` on your machine |
+| 2b | Or default key file on disk | `%USERPROFILE%\.ssh\id_ed25519` / `id_rsa` (Windows), `~/.ssh/…` (macOS) |
 
-PowerShell `ssh` can work after step 1 alone because it may read `~/.ssh/id_ed25519` from disk. **WatchPost uses the agent only.** Copying the `.pub` file to the server is not enough unless the matching private key is loaded.
+PowerShell `ssh` and WatchPost both try the agent first, then default key files. Copying only the `.pub` file to the server is not enough unless the matching private key is loaded or present on disk.
 
 Check before testing in the app:
 
@@ -39,11 +40,11 @@ If this reports **no identities**, run `ssh-add` (see platform sections below), 
 
 | | Terminal (`ssh`) | WatchPost |
 |---|------------------|-----------|
-| Auth | Agent and/or key files on disk | **Agent only** |
+| Auth | Agent, then default key files on disk | **Same order** (agent, then `id_ed25519` / `id_rsa`) |
 | Process | Your shell | Desktop app (Dock, Start menu, installer) |
 | Windows pipe | `\\.\pipe\openssh-ssh-agent` | Same (not PuTTY/Pageant) |
 
-Typical case: the key file exists, terminal login works, but the agent holds no identities. The CLI falls back to the file; WatchPost does not.
+Typical case: the key file exists and terminal login works via the file fallback, but the agent holds no identities — WatchPost should still connect if the default key file is present. If both agent and default files fail, you see **-34** in diagnostics.
 
 ---
 
@@ -53,7 +54,7 @@ WatchPost uses `ssh2` (libssh2). Negative numbers in `[Session(-NN)]` mark the f
 
 | Code | Stage | Meaning | Fix |
 |------|-------|---------|-----|
-| **-34** | Auth | No keys in agent (or agent unreachable) | `ssh-add`, confirm `ssh-add -l`, restart app |
+| **-34** | Auth | No keys in agent and no usable default key file | `ssh-add` or place key at `%USERPROFILE%\.ssh\id_ed25519` (or `id_rsa`), restart app |
 | **-43** | Handshake | TCP started but SSH exchange failed | Host/port/firewall/VPN; not a missing server key |
 
 Example **-34**:
@@ -99,7 +100,7 @@ ssh -p PORT user@host
 
 **4. Restart WatchPost** after `ssh-add`.
 
-Dev builds launched from the same Terminal session after `ssh-add` can help isolate environment issues. Packaged `.app` builds rely on Keychain + agent only.
+Dev builds launched from the same Terminal session after `ssh-add` can help isolate environment issues. Packaged `.app` builds use the Keychain-backed agent and default key files under `~/.ssh`.
 
 ---
 
@@ -133,7 +134,7 @@ ssh -p PORT user@host
 
 | Situation | Result |
 |-----------|--------|
-| Public key on server, never `ssh-add` | Terminal may work; WatchPost **-34** |
+| Public key on server, no `ssh-add`, key file missing | Terminal may work if key elsewhere; WatchPost **-34** |
 | PuTTY / Pageant only | Keys not visible to WatchPost |
 | `ssh-agent` stopped | Agent errors |
 | Handshake **-43** | Network/firewall, not agent |
@@ -142,7 +143,7 @@ ssh -p PORT user@host
 
 ### Dev build vs installed app
 
-Same authentication model. A Terminal-launched dev build may inherit shell environment; an installed app uses only the system agent. Users who never run `ssh-add` (or have Windows agent disabled) see agent errors in the installed app even when terminal `ssh` works.
+Same authentication model. A Terminal-launched dev build may inherit shell environment; an installed app uses the system agent and default key paths under your profile. Users with PuTTY/Pageant only, or a non-default key path with no `ssh-add`, may still see agent errors.
 
 ---
 
@@ -180,4 +181,4 @@ Open **Diagnostics** (remote source selected) or **Run full diagnostics** in the
 
 ### Roadmap
 
-A WatchPost-generated key (installed on servers as a normal public key) is under consideration to reduce agent dependency on installed builds. Until then, load your existing key into the agent.
+A WatchPost-generated key (installed on servers as a normal public key) is under consideration. Until then, use `ssh-add` or keep a default key file in `~/.ssh` / `%USERPROFILE%\.ssh`.
