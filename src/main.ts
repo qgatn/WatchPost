@@ -639,11 +639,9 @@ function renderMain(root: HTMLElement) {
   }
 
   type SettingsTab = "general" | "widget" | "servers";
-  let settingsTab: SettingsTab = "general";
   let returnToSettingsServers = false;
 
   function setSettingsTab(tab: SettingsTab) {
-    settingsTab = tab;
     document.querySelectorAll<HTMLButtonElement>(".settings-tab").forEach((btn) => {
       const id = btn.getAttribute("data-settings-tab") as SettingsTab;
       const active = id === tab;
