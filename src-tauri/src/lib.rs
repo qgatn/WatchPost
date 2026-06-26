@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use store::{NewServer, ServerEntry, StackMode, WidgetPrefs};
+use store::{AuthMethod, NewServer, ServerEntry, StackMode, WidgetPrefs};
 use tauri::RunEvent;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow, WindowEvent};
 
@@ -299,7 +299,9 @@ async fn test_server(server: NewServer) -> TestResult {
 
 #[tauri::command]
 async fn diagnose_server(server: NewServer) -> DiagnoseResult {
-    tauri::async_runtime::spawn_blocking(move || ssh::diagnose_connection(&entry_from_new(&server)))
+    tauri::async_runtime::spawn_blocking(move || {
+        ssh::diagnose_connection(&entry_from_new(&server))
+    })
         .await
         .unwrap_or_else(|_| DiagnoseResult {
             ok: false,
@@ -420,6 +422,25 @@ fn run_server_poller(app: AppHandle, entry: ServerEntry, stop: Arc<AtomicBool>) 
     const POLL_MS: u64 = 2500;
     const BACKOFF_MS: u64 = 5000;
 
+    #[cfg(windows)]
+    if matches!(entry.auth, AuthMethod::KeyFile) {
+        while !stop.load(Ordering::Relaxed) {
+            match ssh::collect_linux_metrics_via_cli(&entry, &entry.alias) {
+                Ok(snapshot) => {
+                    emit_source_status(&app, &entry.alias, true, "receiving metrics");
+                    let _ = app.emit("metrics", &snapshot);
+                }
+                Err(e) => {
+                    emit_source_status(&app, &entry.alias, false, &format!("metrics: {e}"));
+                }
+            }
+            if !stop.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(POLL_MS));
+            }
+        }
+        return;
+    }
+
     while !stop.load(Ordering::Relaxed) {
         let sess = match ssh::connect_session_for(&entry) {
             Ok(s) => s,
@@ -448,8 +469,6 @@ fn run_server_poller(app: AppHandle, entry: ServerEntry, stop: Arc<AtomicBool>) 
             thread::sleep(Duration::from_millis(POLL_MS));
         }
 
-        // A metrics failure dropped us out of the inner loop; back off before
-        // reconnecting so a persistent error doesn't spin a tight reconnect loop.
         if metrics_failed && !stop.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(BACKOFF_MS));
         }

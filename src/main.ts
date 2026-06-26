@@ -375,13 +375,18 @@ function renderMain(root: HTMLElement) {
             <label>Host <input id="srv-host" placeholder="192.168.1.50" /></label>
             <label>Port <input id="srv-port" type="number" value="22" /></label>
             <label>User <input id="srv-user" placeholder="deploy" /></label>
-            <p class="modal-hint">Uses your SSH agent (same keys as Terminal). One-time: put your <strong>public</strong> key on the server.</p>
+            <p class="modal-hint">Uses your SSH key for login (key file by default when detected). One-time: put your <strong>public</strong> key on the server.</p>
           </div>
           <div class="modal-body hidden" data-step="2">
             <p class="modal-hint">WatchPost logs in with your SSH key — no passwords stored. Run these once per server, top to bottom.</p>
             <p class="modal-hint" id="setup-key-status">Checking for SSH key…</p>
             <pre class="setup-key-line hidden" id="setup-pubkey"></pre>
             <button type="button" class="btn-ghost hidden" id="copy-pubkey">Copy public key</button>
+            <label class="setup-auth-choice">
+              <input id="prefer-detected-key" type="checkbox" checked />
+              Use detected key file automatically (recommended on Windows)
+            </label>
+            <p class="modal-hint" id="setup-auth-mode"></p>
             <div class="tab-row">
               <button type="button" class="tab active" data-shell-tab="bash">Bash</button>
               <button type="button" class="tab" data-shell-tab="ps">PowerShell</button>
@@ -557,13 +562,28 @@ function renderMain(root: HTMLElement) {
     return entry ? entryToNewServer(entry) : null;
   }
 
+  function privateKeyPathFromPublic(publicKeyPath?: string | null): string | null {
+    if (!publicKeyPath) return null;
+    const trimmed = publicKeyPath.trim();
+    if (!trimmed) return null;
+    if (trimmed.toLowerCase().endsWith(".pub")) {
+      return trimmed.slice(0, -4);
+    }
+    return null;
+  }
+
   function readForm(): NewServer | null {
     const alias = ($("srv-alias") as HTMLInputElement).value.trim();
     const host = ($("srv-host") as HTMLInputElement).value.trim();
     const port = Number(($("srv-port") as HTMLInputElement).value) || 22;
     const user = ($("srv-user") as HTMLInputElement).value.trim();
+    const preferDetectedKey = ($("prefer-detected-key") as HTMLInputElement).checked;
     if (!alias || !host || !user) return null;
     if (alias.length > ALIAS_MAX_LEN) return null;
+    const keyPath = privateKeyPathFromPublic(setupInfo?.public_key_path);
+    if (keyPath && preferDetectedKey) {
+      return { alias, host, port, user, auth: "key_file", key_path: keyPath };
+    }
     return { alias, host, port, user, auth: "agent", key_path: null };
   }
 
@@ -780,7 +800,7 @@ function renderMain(root: HTMLElement) {
   function fillSetupCommands() {
     const form = readForm();
     if (!form) return;
-    const cmds = buildSetupCommands(form.host, form.port, form.user);
+    const cmds = buildSetupCommands(form.host, form.port, form.user, setupInfo?.public_key_path);
     $("cmd-bash-keygen").textContent = cmds.bashKeygen;
     $("cmd-bash-copy").textContent = cmds.bashCopyId;
     $("cmd-bash-test").textContent = cmds.bashTest;
@@ -789,17 +809,40 @@ function renderMain(root: HTMLElement) {
     $("cmd-ps-test").textContent = cmds.psTest;
   }
 
+  function updateSetupAuthModeSummary() {
+    const authMode = $("setup-auth-mode");
+    const preferDetectedKey = $("prefer-detected-key") as HTMLInputElement;
+    const keyPath = privateKeyPathFromPublic(setupInfo?.public_key_path);
+    if (keyPath && preferDetectedKey.checked) {
+      authMode.textContent = `Auth mode: key file (${keyPath})`;
+      return;
+    }
+    if (keyPath && !preferDetectedKey.checked) {
+      authMode.textContent = "Auth mode: SSH agent (you turned off key-file mode)";
+      return;
+    }
+    if (setupInfo?.has_public_key) {
+      authMode.textContent = "Auth mode: SSH agent (detected key path is not in standard *.pub format)";
+      return;
+    }
+    authMode.textContent = "Auth mode: SSH agent (no local key detected yet)";
+  }
+
   async function refreshSetupInfo() {
     setupInfo = await getSshSetupInfo();
     const status = $("setup-key-status");
     const pub = $("setup-pubkey");
     const copyBtn = $("copy-pubkey");
+    const preferDetectedKey = $("prefer-detected-key") as HTMLInputElement;
     const keygenWhy = [$("why-bash-keygen"), $("why-ps-keygen")];
     if (setupInfo.has_public_key && setupInfo.public_key) {
+      const keyPath = privateKeyPathFromPublic(setupInfo.public_key_path);
       status.textContent = `Found public key: ${setupInfo.public_key_path}`;
       pub.textContent = setupInfo.public_key;
       pub.classList.remove("hidden");
       copyBtn.classList.remove("hidden");
+      preferDetectedKey.disabled = !keyPath;
+      preferDetectedKey.checked = !!keyPath;
       for (const el of keygenWhy) {
         el.textContent = "You already have a key (shown above) — you can skip this step.";
         el.classList.add("cmd-why-optional");
@@ -808,11 +851,15 @@ function renderMain(root: HTMLElement) {
       status.textContent = "No public key found — generate one with the command below.";
       pub.classList.add("hidden");
       copyBtn.classList.add("hidden");
+      preferDetectedKey.checked = false;
+      preferDetectedKey.disabled = true;
       for (const el of keygenWhy) {
         el.textContent = "You don't have an SSH key yet — run this first to create one.";
         el.classList.remove("cmd-why-optional");
       }
     }
+    updateSetupAuthModeSummary();
+    fillSetupCommands();
   }
 
   function updateDiskSection(disks: DiskInfo[]) {
@@ -1037,7 +1084,6 @@ function renderMain(root: HTMLElement) {
       return;
     }
     if (modalStep === 1) {
-      fillSetupCommands();
       await refreshSetupInfo();
       setModalStep(2);
     } else if (modalStep === 2) {
@@ -1066,6 +1112,10 @@ function renderMain(root: HTMLElement) {
 
   $("copy-pubkey").addEventListener("click", () => {
     if (setupInfo?.public_key) copyText(setupInfo.public_key).catch(() => {});
+  });
+
+  $("prefer-detected-key").addEventListener("change", () => {
+    updateSetupAuthModeSummary();
   });
 
   $("test-server-btn").addEventListener("click", async () => {

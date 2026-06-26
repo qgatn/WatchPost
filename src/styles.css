@@ -805,6 +805,23 @@ body.widget-mode {
   word-break: break-all;
 }
 
+.setup-auth-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.setup-auth-choice input {
+  margin: 0;
+}
+
+#setup-auth-mode {
+  margin: 0 0 8px;
+}
+
 .test-result {
   font-size: 12px;
   color: var(--muted);

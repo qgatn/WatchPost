@@ -111,16 +111,29 @@ export interface SetupCommands {
   psTest: string;
 }
 
-export function buildSetupCommands(host: string, port: number, user: string): SetupCommands {
+function escapePowerShellSingleQuoted(input: string): string {
+  return input.replace(/'/g, "''");
+}
+
+export function buildSetupCommands(
+  host: string,
+  port: number,
+  user: string,
+  publicKeyPath?: string | null,
+): SetupCommands {
   const target = `${user}@${host}`;
   const p = `-p ${port}`;
+  const psPubSource =
+    publicKeyPath && publicKeyPath.trim()
+      ? `Get-Content -Raw '${escapePowerShellSingleQuoted(publicKeyPath.trim())}'`
+      : "Get-Content -Raw $env:USERPROFILE\\.ssh\\id_ed25519.pub";
   return {
     bashKeygen: 'ssh-keygen -t ed25519 -C "watchpost"',
     bashCopyId: `ssh-copy-id ${p} ${target}`,
     bashTest: `ssh ${p} ${target}`,
     psKeygen: 'ssh-keygen -t ed25519 -C "watchpost"',
     psCopyId:
-      `type $env:USERPROFILE\\.ssh\\id_ed25519.pub | ssh ${p} ${target} ` +
+      `${psPubSource} | ssh ${p} ${target} ` +
       `"mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"`,
     psTest: `ssh ${p} ${target}`,
   };

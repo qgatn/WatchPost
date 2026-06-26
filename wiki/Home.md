@@ -6,6 +6,7 @@
 |------|----------|
 | [Build from source](Build-from-source) | Prerequisite install scripts, clone, `npm run setup`, package locally |
 | [FAQ](FAQ) | SSH agent setup, key files, and error codes (macOS / Windows) |
+| [Windows SSH dev](windowsDev) | What we tried on Windows, libssh2 vs `ssh.exe`, shipped behavior |
 | [Releasing](RELEASE) | GitHub Actions, version bump, tags |
 
 ## In the app

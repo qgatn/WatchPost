@@ -1,7 +1,10 @@
 //! Step-by-step SSH + metrics diagnostics for the UI log.
 
-use super::{collect_linux_metrics, connect_session_for, exec_capture};
-use crate::store::ServerEntry;
+use super::{
+    collect_linux_metrics, collect_linux_metrics_via_cli, connect_session_for, exec_capture,
+    test_connection_via_cli,
+};
+use crate::store::{AuthMethod, ServerEntry};
 use serde::Serialize;
 use std::net::ToSocketAddrs;
 use std::time::Instant;
@@ -27,31 +30,96 @@ fn step(steps: &mut Vec<DiagnoseStep>, name: &str, ok: bool, detail: impl Into<S
     });
 }
 
-pub fn diagnose_connection(entry: &ServerEntry) -> DiagnoseResult {
-    let mut steps = Vec::new();
-    let addr = format!("{}:{}", entry.host, entry.port);
-
-    let _socket_addr = match addr.to_socket_addrs() {
+fn resolve_host_step(steps: &mut Vec<DiagnoseStep>, host: &str, port: u16) -> bool {
+    let addr = format!("{host}:{port}");
+    match addr.to_socket_addrs() {
         Ok(mut addrs) => match addrs.next() {
             Some(a) => {
-                step(&mut steps, "Resolve host", true, format!("{addr} → {a}"));
-                a
+                step(steps, "Resolve host", true, format!("{addr} → {a}"));
+                true
             }
             None => {
                 step(
-                    &mut steps,
+                    steps,
                     "Resolve host",
                     false,
                     format!("no address for {addr}"),
                 );
-                return DiagnoseResult { ok: false, steps };
+                false
             }
         },
         Err(e) => {
-            step(&mut steps, "Resolve host", false, e.to_string());
-            return DiagnoseResult { ok: false, steps };
+            step(steps, "Resolve host", false, e.to_string());
+            false
         }
-    };
+    }
+}
+
+fn check_required_tools_step(steps: &mut Vec<DiagnoseStep>, out: Result<String, String>) -> bool {
+    match out {
+        Ok(out) => {
+            let missing: Vec<&str> = ["bash", "awk", "df"]
+                .into_iter()
+                .filter(|t| !out.contains(t))
+                .collect();
+            if missing.is_empty() {
+                step(steps, "Required tools", true, "bash, awk, df found");
+                true
+            } else {
+                step(
+                    steps,
+                    "Required tools",
+                    false,
+                    format!("missing: {}", missing.join(", ")),
+                );
+                false
+            }
+        }
+        Err(e) => {
+            step(steps, "Required tools", false, e);
+            false
+        }
+    }
+}
+
+fn finish_metrics_step(
+    mut steps: Vec<DiagnoseStep>,
+    metrics_start: Instant,
+    result: Result<crate::metrics::Snapshot, String>,
+) -> DiagnoseResult {
+    match result {
+        Ok(snap) => {
+            step(
+                &mut steps,
+                "Metrics script + parse",
+                true,
+                format!(
+                    "{} · CPU {:.0}% · {} cores · {} ms",
+                    snap.hostname,
+                    snap.cpu_usage,
+                    snap.per_core.len(),
+                    metrics_start.elapsed().as_millis()
+                ),
+            );
+            DiagnoseResult { ok: true, steps }
+        }
+        Err(e) => {
+            step(&mut steps, "Metrics script + parse", false, e);
+            DiagnoseResult { ok: false, steps }
+        }
+    }
+}
+
+pub fn diagnose_connection(entry: &ServerEntry) -> DiagnoseResult {
+    #[cfg(windows)]
+    if matches!(entry.auth, AuthMethod::KeyFile) {
+        return diagnose_via_cli(entry);
+    }
+
+    let mut steps = Vec::new();
+    if !resolve_host_step(&mut steps, &entry.host, entry.port) {
+        return DiagnoseResult { ok: false, steps };
+    }
 
     let start = Instant::now();
     let sess = match connect_session_for(entry) {
@@ -81,50 +149,59 @@ pub fn diagnose_connection(entry: &ServerEntry) -> DiagnoseResult {
         }
     }
 
-    match exec_capture(&sess, "command -v bash && command -v awk && command -v df") {
-        Ok(out) => {
-            let missing: Vec<&str> = ["bash", "awk", "df"]
-                .into_iter()
-                .filter(|t| !out.contains(t))
-                .collect();
-            if missing.is_empty() {
-                step(&mut steps, "Required tools", true, "bash, awk, df found");
-            } else {
-                step(
-                    &mut steps,
-                    "Required tools",
-                    false,
-                    format!("missing: {}", missing.join(", ")),
-                );
-                return DiagnoseResult { ok: false, steps };
-            }
-        }
-        Err(e) => {
-            step(&mut steps, "Required tools", false, e);
-            return DiagnoseResult { ok: false, steps };
-        }
+    if !check_required_tools_step(
+        &mut steps,
+        exec_capture(&sess, "command -v bash && command -v awk && command -v df"),
+    ) {
+        return DiagnoseResult { ok: false, steps };
     }
 
     let metrics_start = Instant::now();
-    match collect_linux_metrics(&sess, &entry.alias) {
-        Ok(snap) => {
-            step(
-                &mut steps,
-                "Metrics script + parse",
-                true,
-                format!(
-                    "{} · CPU {:.0}% · {} cores · {} ms",
-                    snap.hostname,
-                    snap.cpu_usage,
-                    snap.per_core.len(),
-                    metrics_start.elapsed().as_millis()
-                ),
-            );
-            DiagnoseResult { ok: true, steps }
-        }
-        Err(e) => {
-            step(&mut steps, "Metrics script + parse", false, e);
-            DiagnoseResult { ok: false, steps }
-        }
+    finish_metrics_step(
+        steps,
+        metrics_start,
+        collect_linux_metrics(&sess, &entry.alias),
+    )
+}
+
+#[cfg(windows)]
+fn diagnose_via_cli(entry: &ServerEntry) -> DiagnoseResult {
+    let mut steps = Vec::new();
+    if !resolve_host_step(&mut steps, &entry.host, entry.port) {
+        return DiagnoseResult { ok: false, steps };
     }
+
+    let test = test_connection_via_cli(entry);
+    if !test.ok {
+        step(&mut steps, "SSH connect + auth", false, test.message);
+        return DiagnoseResult { ok: false, steps };
+    }
+    step(
+        &mut steps,
+        "SSH connect + auth",
+        true,
+        format!("authenticated in {} ms", test.latency_ms),
+    );
+    let preview = [test.os.as_deref(), test.hostname.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
+    if !preview.is_empty() {
+        step(&mut steps, "Remote probe", true, preview);
+    }
+
+    if !check_required_tools_step(
+        &mut steps,
+        super::run_ssh_cli(entry, "command -v bash && command -v awk && command -v df"),
+    ) {
+        return DiagnoseResult { ok: false, steps };
+    }
+
+    let metrics_start = Instant::now();
+    finish_metrics_step(
+        steps,
+        metrics_start,
+        collect_linux_metrics_via_cli(entry, &entry.alias),
+    )
 }
