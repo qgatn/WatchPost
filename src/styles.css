@@ -805,17 +805,30 @@ body.widget-mode {
   word-break: break-all;
 }
 
-.setup-auth-choice {
-  display: flex;
-  align-items: center;
+/* Row checkbox — .modal-body label defaults to column (field label + input). */
+.modal-body label.setup-auth-choice {
+  flex-direction: row;
+  align-items: flex-start;
   gap: 8px;
-  margin: 0 0 6px;
-  font-size: 11px;
+  margin: 4px 0 8px;
   color: var(--text);
+  cursor: pointer;
+  line-height: 1.4;
 }
 
-.setup-auth-choice input {
-  margin: 0;
+.modal-body label.setup-auth-choice input[type="checkbox"] {
+  flex-shrink: 0;
+  margin: 2px 0 0;
+  width: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: var(--accent);
+}
+
+.setup-auth-choice-text {
+  flex: 1;
+  min-width: 0;
 }
 
 #setup-auth-mode {

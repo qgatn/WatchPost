@@ -111,8 +111,11 @@ export interface SetupCommands {
   psTest: string;
 }
 
-function escapePowerShellSingleQuoted(input: string): string {
-  return input.replace(/'/g, "''");
+function windowsPubPathForCmd(publicKeyPath?: string | null): string {
+  if (publicKeyPath && publicKeyPath.trim()) {
+    return publicKeyPath.trim().replace(/\//g, "\\");
+  }
+  return "%USERPROFILE%\\.ssh\\id_ed25519.pub";
 }
 
 export function buildSetupCommands(
@@ -123,18 +126,20 @@ export function buildSetupCommands(
 ): SetupCommands {
   const target = `${user}@${host}`;
   const p = `-p ${port}`;
-  const psPubSource =
-    publicKeyPath && publicKeyPath.trim()
-      ? `Get-Content -Raw '${escapePowerShellSingleQuoted(publicKeyPath.trim())}'`
-      : "Get-Content -Raw $env:USERPROFILE\\.ssh\\id_ed25519.pub";
+  // Do not pipe Get-Content into ssh.exe — PowerShell re-encodes (UTF-8 BOM, CRLF).
+  // cmd file redirect (<) sends the .pub bytes as-is; tr -d '\r' strips any Windows CR.
+  const psPubPath = windowsPubPathForCmd(publicKeyPath);
+  const remoteSetup =
+    "umask 077; mkdir -p .ssh && chmod 700 .ssh && tr -d '\\r' >> .ssh/authorized_keys && chmod 600 .ssh/authorized_keys";
+  // Outer single quotes: PowerShell must not parse && or >> (unlike bash-style \").
+  // Double single quotes inside pass bash tr's '\r' through to the remote shell.
+  const remoteForPs = remoteSetup.replace(/'/g, "''");
   return {
     bashKeygen: 'ssh-keygen -t ed25519 -C "watchpost"',
     bashCopyId: `ssh-copy-id ${p} ${target}`,
     bashTest: `ssh ${p} ${target}`,
     psKeygen: 'ssh-keygen -t ed25519 -C "watchpost"',
-    psCopyId:
-      `${psPubSource} | ssh ${p} ${target} ` +
-      `"mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"`,
+    psCopyId: `cmd /c 'ssh ${p} ${target} "${remoteForPs}" < "${psPubPath}"'`,
     psTest: `ssh ${p} ${target}`,
   };
 }

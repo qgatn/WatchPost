@@ -384,7 +384,7 @@ function renderMain(root: HTMLElement) {
             <button type="button" class="btn-ghost hidden" id="copy-pubkey">Copy public key</button>
             <label class="setup-auth-choice">
               <input id="prefer-detected-key" type="checkbox" checked />
-              Use detected key file automatically (recommended on Windows)
+              <span class="setup-auth-choice-text">Use detected key file automatically (recommended on Windows)</span>
             </label>
             <p class="modal-hint" id="setup-auth-mode"></p>
             <div class="tab-row">

@@ -437,6 +437,13 @@ pub fn collect_linux_metrics(sess: &Session, source: &str) -> Result<Snapshot, S
 pub(super) fn run_ssh_cli(entry: &ServerEntry, remote_cmd: &str) -> Result<String, String> {
     let target = format!("{}@{}", entry.user, entry.host);
     let mut cmd = Command::new("ssh");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // GUI apps spawn a visible console on every ssh.exe call unless this is set.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     cmd.arg("-p")
         .arg(entry.port.to_string())
         .arg("-o")
