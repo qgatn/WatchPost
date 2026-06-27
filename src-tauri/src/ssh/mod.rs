@@ -13,6 +13,7 @@ use std::fs;
 use std::io::Read;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -434,6 +435,7 @@ pub fn collect_linux_metrics(sess: &Session, source: &str) -> Result<Snapshot, S
     linux::parse_linux_metrics(source, &out)
 }
 
+#[cfg(windows)]
 pub(super) fn run_ssh_cli(entry: &ServerEntry, remote_cmd: &str) -> Result<String, String> {
     let target = format!("{}@{}", entry.user, entry.host);
     let mut cmd = Command::new("ssh");
@@ -471,6 +473,7 @@ pub(super) fn run_ssh_cli(entry: &ServerEntry, remote_cmd: &str) -> Result<Strin
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+#[cfg(windows)]
 pub fn test_connection_via_cli(entry: &ServerEntry) -> TestResult {
     let start = Instant::now();
     match run_ssh_cli(entry, "uname -srm; hostname") {
@@ -500,6 +503,7 @@ pub fn test_connection_via_cli(entry: &ServerEntry) -> TestResult {
     }
 }
 
+#[cfg(windows)]
 pub fn collect_linux_metrics_via_cli(entry: &ServerEntry, source: &str) -> Result<Snapshot, String> {
     let script = linux_script_unix();
     let cmd = format!("bash -s <<'WATCHPOST_EOF'\n{script}\nWATCHPOST_EOF");

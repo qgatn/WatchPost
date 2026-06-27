@@ -1,10 +1,11 @@
 //! Step-by-step SSH + metrics diagnostics for the UI log.
 
-use super::{
-    collect_linux_metrics, collect_linux_metrics_via_cli, connect_session_for, exec_capture,
-    test_connection_via_cli,
-};
-use crate::store::{AuthMethod, ServerEntry};
+use super::{collect_linux_metrics, connect_session_for, exec_capture};
+#[cfg(windows)]
+use super::{collect_linux_metrics_via_cli, test_connection_via_cli};
+use crate::store::ServerEntry;
+#[cfg(windows)]
+use crate::store::AuthMethod;
 use serde::Serialize;
 use std::net::ToSocketAddrs;
 use std::time::Instant;

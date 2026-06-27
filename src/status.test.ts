@@ -13,8 +13,8 @@ describe("isStale", () => {
   });
 
   it("is true after the stale window", () => {
-    const now = 10_000;
+    const now = 100_000;
     expect(isStale(now - STALE_MS - 1, now)).toBe(true);
-    expect(isStale(1, now)).toBe(true);
+    expect(isStale(now - STALE_MS - 5000, now)).toBe(true);
   });
 });

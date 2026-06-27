@@ -262,6 +262,13 @@ body.widget-mode {
   white-space: nowrap;
 }
 
+.widget-ctx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 199;
+  background: transparent;
+}
+
 .widget-context-menu {
   position: fixed;
   z-index: 200;

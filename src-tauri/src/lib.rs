@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use store::{AuthMethod, NewServer, ServerEntry, StackMode, WidgetPrefs};
+use store::{NewServer, ServerEntry, StackMode, WidgetPrefs};
+#[cfg(windows)]
+use store::AuthMethod;
 use tauri::RunEvent;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow, WindowEvent};
 

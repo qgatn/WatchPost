@@ -1213,10 +1213,12 @@ function renderWidget(root: HTMLElement) {
     <div class="widget-wrap" id="widget-wrap">
       <div class="widget-stack" id="widget-stack"></div>
     </div>
+    <div class="widget-ctx-backdrop hidden" id="widget-ctx-backdrop" aria-hidden="true"></div>
     <div class="widget-context-menu hidden" id="widget-ctx-menu" role="menu" aria-hidden="true"></div>`;
 
   const wrap = document.getElementById("widget-wrap")!;
   const stack = document.getElementById("widget-stack")!;
+  const ctxBackdrop = document.getElementById("widget-ctx-backdrop")!;
   const ctxMenu = document.getElementById("widget-ctx-menu")!;
   const win = getCurrentWindow();
   const knownSources = new Set<string>();
@@ -1249,6 +1251,8 @@ function renderWidget(root: HTMLElement) {
 
   function hideCtxMenu() {
     ctxMenuOpen = false;
+    ctxBackdrop.classList.add("hidden");
+    ctxBackdrop.setAttribute("aria-hidden", "true");
     ctxMenu.classList.add("hidden");
     ctxMenu.setAttribute("aria-hidden", "true");
     applyWindowSize();
@@ -1281,6 +1285,8 @@ function renderWidget(root: HTMLElement) {
     const mainOpen = await invoke<boolean>("is_main_visible").catch(() => false);
     fillCtxMenu(mainOpen);
     ctxMenuOpen = true;
+    ctxBackdrop.classList.remove("hidden");
+    ctxBackdrop.setAttribute("aria-hidden", "false");
     ctxMenu.classList.remove("hidden");
     ctxMenu.setAttribute("aria-hidden", "false");
     positionCtxMenu(x, y);
@@ -1290,7 +1296,21 @@ function renderWidget(root: HTMLElement) {
   stack.addEventListener("contextmenu", (e) => {
     if (!(e.target as HTMLElement).closest(".widget-strip")) return;
     e.preventDefault();
+    if (ctxMenuOpen) {
+      hideCtxMenu();
+      return;
+    }
     showCtxMenu(e.clientX, e.clientY).catch(() => {});
+  });
+
+  ctxBackdrop.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    hideCtxMenu();
+  });
+
+  ctxBackdrop.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    hideCtxMenu();
   });
 
   ctxMenu.addEventListener("click", (e) => {
@@ -1315,13 +1335,8 @@ function renderWidget(root: HTMLElement) {
     }
   });
 
-  document.addEventListener("mousedown", (e) => {
-    if (e.button !== 0 || ctxMenu.classList.contains("hidden")) return;
-    if (!ctxMenu.contains(e.target as Node)) hideCtxMenu();
-  });
-
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") hideCtxMenu();
+    if (e.key === "Escape" && ctxMenuOpen) hideCtxMenu();
   });
 
   stack.addEventListener("dblclick", (e) => {
@@ -1478,6 +1493,7 @@ function renderWidget(root: HTMLElement) {
     .catch(() => {});
 
   win.onFocusChanged(({ payload: focused }) => {
+    if (!focused) hideCtxMenu();
     if (focused) {
       refreshSources()
         .catch(() => {})
