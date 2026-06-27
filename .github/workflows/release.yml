@@ -22,6 +22,10 @@ jobs:
     permissions:
       contents: write
     runs-on: windows-latest
+    env:
+      # crates.io occasionally returns partial downloads on CI; retry more aggressively.
+      CARGO_NET_RETRY: 10
+      CARGO_NET_TIMEOUT: 120
     steps:
       - uses: actions/checkout@v6
 
@@ -45,6 +49,18 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Prefetch Rust crates (retry on flaky registry)
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          for attempt in 1 2 3; do
+            echo "cargo fetch attempt $attempt"
+            cargo fetch && exit 0
+            echo "cargo fetch failed, waiting 20s..."
+            sleep 20
+          done
+          exit 1
 
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
