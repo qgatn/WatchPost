@@ -100,18 +100,13 @@ pub fn remove_server(base: PathBuf, id: &str) -> Result<(), String> {
     save_servers(base, &servers)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StackMode {
+    #[default]
     Behind,
     Normal,
     OnTop,
-}
-
-impl Default for StackMode {
-    fn default() -> Self {
-        Self::Behind
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,18 +130,13 @@ impl Default for WidgetSegments {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricDisplay {
     Number,
     Bar,
+    #[default]
     Both,
-}
-
-impl Default for MetricDisplay {
-    fn default() -> Self {
-        Self::Both
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

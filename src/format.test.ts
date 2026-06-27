@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diskUsedPct, fmtBytes, fmtRate, fmtUptime, fmtUsers, fmtDiskUsage, netStatusLine, usageLevel, usageLabel, segmentLevel } from "./format";
+import { diskUsedPct, fmtBytes, fmtRate, fmtUptime, fmtUsers, fmtDiskUsage, netStatusLine, usageLevel, segmentLevel } from "./format";
 
 describe("fmtBytes", () => {
   it("formats bytes and scales up", () => {
@@ -62,14 +62,6 @@ describe("segmentLevel", () => {
     expect(segmentLevel(89)).toBe("warn");
     expect(segmentLevel(90)).toBe("err");
     expect(segmentLevel(100)).toBe("err");
-  });
-});
-
-describe("usageLabel", () => {
-  it("describes threshold bands", () => {
-    expect(usageLabel(30)).toContain("healthy");
-    expect(usageLabel(60)).toContain("elevated");
-    expect(usageLabel(95)).toContain("critical");
   });
 });
 

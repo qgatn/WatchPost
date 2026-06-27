@@ -52,7 +52,7 @@ impl ActiveUsersTracker {
 pub fn count_active_users() -> usize {
     #[cfg(target_family = "unix")]
     {
-        return Command::new("who")
+        Command::new("who")
             .output()
             .ok()
             .map(|o| {
@@ -61,14 +61,14 @@ pub fn count_active_users() -> usize {
                     .filter(|l| !l.trim().is_empty())
                     .count()
             })
-            .unwrap_or(0);
+            .unwrap_or(0)
     }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         // GUI apps spawn visible console windows unless CREATE_NO_WINDOW is set.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        return Command::new("query")
+        Command::new("query")
             .creation_flags(CREATE_NO_WINDOW)
             .arg("user")
             .output()
@@ -83,7 +83,7 @@ pub fn count_active_users() -> usize {
                     })
                     .count()
             })
-            .unwrap_or(0);
+            .unwrap_or(0)
     }
     #[cfg(not(any(target_family = "unix", target_os = "windows")))]
     {

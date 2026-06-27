@@ -2,7 +2,9 @@
 
 Lightweight desktop monitor for your PC and remote Linux servers — live CPU, memory, disk, and network in a dashboard and a desktop widget.
 
-Built with [Tauri](https://tauri.app/) (Rust + system webview). macOS and Windows.
+Built with [Tauri](https://tauri.app/) (Rust + system webview). Runs on macOS and Windows.
+
+**Project home:** https://github.com/qgatn/WatchPost
 
 ## Features
 
@@ -13,29 +15,24 @@ Built with [Tauri](https://tauri.app/) (Rust + system webview). macOS and Window
 - **Launch at login** — optional autostart on Windows and macOS; open the app or widget only
 - **Low footprint** — timer-driven sampling, no bundled browser
 
-## Quick start
+## Install
+
+Grab a prebuilt installer for macOS or Windows from the **[Releases page](https://github.com/qgatn/WatchPost/releases)**. Installers are unsigned, so the first launch may show a Gatekeeper (macOS) or SmartScreen (Windows) prompt — choose to open/run anyway.
+
+## Build from source
+
+Prefer to compile it yourself? You'll need Node.js, Rust, and a C/C++ toolchain (see the [build guide](wiki/Build-from-source.md) for official download links).
 
 ```bash
 git clone https://github.com/qgatn/WatchPost.git
 cd WatchPost
+npm run setup    # checks your toolchain, then installs dependencies
+npm run start    # dev mode (the first Rust compile takes a few minutes)
 ```
 
-**First time on this machine** — install build tools, then project dependencies:
+Full prerequisites and troubleshooting: **[wiki/Build-from-source.md](wiki/Build-from-source.md)**.
 
-| Platform | Prerequisites (downloads from the internet) | Project setup |
-|----------|---------------------------------------------|---------------|
-| macOS | `bash scripts/install-prerequisites-macos.sh` | `npm run setup` |
-| Windows | `powershell -ExecutionPolicy Bypass -File scripts/install-prerequisites-windows.ps1` | `npm run setup` |
-
-Either platform can use `npm run install-deps` instead of the platform script (requires Node already, so use the shell script on a fresh machine).
-
-```bash
-npm run start    # development mode (first run compiles Rust — several minutes)
-```
-
-Full detail, path options, and manual fallback: **[wiki/Build-from-source.md](wiki/Build-from-source.md)**.
-
-SSH setup for remote servers: **[wiki/FAQ.md](wiki/FAQ.md)**.
+Setting up SSH for remote servers: **[wiki/FAQ.md](wiki/FAQ.md)**.
 
 ## Using the app
 
@@ -53,8 +50,7 @@ SSH setup for remote servers: **[wiki/FAQ.md](wiki/FAQ.md)**.
 
 | Command | Description |
 |---------|-------------|
-| `npm run install-deps` | Install OS prerequisites (Node, Rust, compilers) |
-| `npm run setup` | Verify tools and install npm dependencies |
+| `npm run setup` | Verify your toolchain and install npm dependencies |
 | `npm run start` | Run in development mode |
 | `npm test` | Run test suite |
 | `npm run package` | Build a release installer for this OS |
@@ -64,7 +60,7 @@ SSH setup for remote servers: **[wiki/FAQ.md](wiki/FAQ.md)**.
 
 | Page | Contents |
 |------|----------|
-| [Build from source](wiki/Build-from-source.md) | Prerequisite scripts, clone, build, share installers |
+| [Build from source](wiki/Build-from-source.md) | Prerequisites, clone, build, package locally |
 | [FAQ](wiki/FAQ.md) | SSH and agent troubleshooting |
 | [Release](wiki/RELEASE.md) | GitHub Actions, tagging, publishing installers |
 | [Wiki index](wiki/Home.md) | All wiki pages |

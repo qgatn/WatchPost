@@ -65,13 +65,6 @@ export function usageLevel(pct: number): UsageLevel {
   return "ok";
 }
 
-export function usageLabel(pct: number): string {
-  const level = usageLevel(pct);
-  if (level === "ok") return "healthy (≤50%)";
-  if (level === "warn") return "elevated (>50%)";
-  return "critical (>90%)";
-}
-
 /** Widget segment highlight: yellow when elevated (≥70%), red when high (≥90%). */
 export const SEGMENT_WARN_PCT = 70;
 export const SEGMENT_ERR_PCT = 90;

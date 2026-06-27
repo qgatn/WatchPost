@@ -62,22 +62,21 @@ fn connect_session(entry: &ServerEntry) -> Result<Session, String> {
         AuthMethod::Agent => {
             // Prefer disk keys first (same as OpenSSH when the agent is down/empty).
             // On Windows a failed agent call can also poison libssh2's session state.
-            let key_result =
-                try_default_key_files(&mut sess, &entry.user, &entry.host);
-            if key_result.is_err() && !sess.authenticated() {
-                let key_err = key_result.unwrap_err();
-                let mut agent_err = None;
-                if ssh_agent_available() {
-                    agent_err = sess.userauth_agent(&entry.user).err();
-                }
+            if let Err(key_err) = try_default_key_files(&mut sess, &entry.user, &entry.host) {
                 if !sess.authenticated() {
-                    return Err(match agent_err {
-                        Some(e) => format!("{key_err}; agent auth also failed: {e}"),
-                        None if !ssh_agent_available() => format!(
-                            "SSH agent is not running (optional on Windows); {key_err}"
-                        ),
-                        None => key_err,
-                    });
+                    let mut agent_err = None;
+                    if ssh_agent_available() {
+                        agent_err = sess.userauth_agent(&entry.user).err();
+                    }
+                    if !sess.authenticated() {
+                        return Err(match agent_err {
+                            Some(e) => format!("{key_err}; agent auth also failed: {e}"),
+                            None if !ssh_agent_available() => format!(
+                                "SSH agent is not running (optional on Windows); {key_err}"
+                            ),
+                            None => key_err,
+                        });
+                    }
                 }
             }
         }

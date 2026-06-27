@@ -563,7 +563,7 @@ pub fn run() {
         .run(|app_handle, event| {
             if let RunEvent::ExitRequested { api, .. } = &event {
                 // macOS may emit ExitRequested when main is hidden via ✕; keep running if widget is up.
-                if HIDING_MAIN.swap(false, Ordering::SeqCst) && any_window_visible(&app_handle) {
+                if HIDING_MAIN.swap(false, Ordering::SeqCst) && any_window_visible(app_handle) {
                     api.prevent_exit();
                 }
             }
@@ -571,7 +571,7 @@ pub fn run() {
             {
                 // Dock icon click when main is hidden (Windows restores via taskbar instead).
                 if let RunEvent::Reopen { .. } = event {
-                    let _ = focus_main_window(&app_handle);
+                    let _ = focus_main_window(app_handle);
                 }
             }
         });

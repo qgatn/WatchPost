@@ -65,12 +65,12 @@ if (-not $ok) {
     Write-Host ""
     Write-Host "Cannot continue — install the missing tools first." -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "Full install guide (downloads, verify, PATH):"
-    Write-Host "  wiki/Build-from-source.md"
+    Write-Host "Install Node.js (nodejs.org), Rust (rustup.rs), and Visual Studio"
+    Write-Host "Build Tools (Desktop development with C++)."
     Write-Host ""
-    Write-Host "After installing, reopen the terminal (or run the prerequisite script again), then:"
-    Write-Host "  powershell -ExecutionPolicy Bypass -File scripts/install-prerequisites-windows.ps1"
-    Write-Host "  powershell -ExecutionPolicy Bypass -File scripts/setup.ps1   # or: npm run setup"
+    Write-Host "Full guide (links, verify, PATH): wiki/Build-from-source.md"
+    Write-Host ""
+    Write-Host "Then reopen the terminal and run:  npm run setup"
     exit 1
 }
 

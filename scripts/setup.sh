@@ -63,12 +63,12 @@ if [ "$missing" -ne 0 ]; then
   echo ""
   echo -e "${YELLOW}Cannot continue — install the missing tools first.${NC}"
   echo ""
-  echo "Full install guide (downloads, verify, PATH):"
-  echo "  wiki/Build-from-source.md"
+  echo "Install Node.js (nodejs.org) and Rust (rustup.rs), plus Xcode"
+  echo "Command Line Tools: xcode-select --install"
   echo ""
-  echo "After installing, reopen the terminal and run:"
-  echo "  bash scripts/install-prerequisites-macos.sh   # install Node, Rust, Xcode CLT"
-  echo "  bash scripts/setup.sh                         # or: npm run setup"
+  echo "Full guide (links, verify, PATH): wiki/Build-from-source.md"
+  echo ""
+  echo "Then reopen the terminal and run:  npm run setup"
   exit 1
 fi
 
