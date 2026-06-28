@@ -569,6 +569,16 @@ body.widget-mode {
   font-size: 11px;
 }
 
+.about-links a {
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.about-links a:hover {
+  text-decoration: underline;
+}
+
 .servers-list {
   display: flex;
   flex-direction: column;
@@ -612,6 +622,13 @@ body.widget-mode {
   border-radius: 8px;
 }
 
+.server-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .server-row-info {
   display: flex;
   flex-direction: column;
@@ -631,6 +648,25 @@ body.widget-mode {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.settings-field input,
+.settings-field select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid #fff1;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
 }
 
 .btn-danger {

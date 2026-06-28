@@ -2,6 +2,20 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type StackMode = "behind" | "normal" | "on_top";
 export type MetricDisplay = "number" | "bar" | "both";
+export type SshClientPreset =
+  | "system_default"
+  | "mac_terminal"
+  | "mac_i_term"
+  | "windows_power_shell"
+  | "windows_terminal"
+  | "moba_xterm"
+  | "pu_tty"
+  | "custom";
+
+export interface SshClientPrefs {
+  preset: SshClientPreset;
+  custom_command: string;
+}
 
 export interface WidgetSegments {
   cpu: boolean;
@@ -23,6 +37,8 @@ export interface WidgetPrefs {
   display: WidgetDisplay;
   launch_at_login: boolean;
   show_widget_on_startup: boolean;
+  server_poll_secs: number;
+  ssh_client: SshClientPrefs;
 }
 
 export const METRIC_SEGMENT_KEYS = ["cpu", "mem", "disk", "net", "users"] as const;
@@ -49,6 +65,8 @@ export const DEFAULT_WIDGET_PREFS: WidgetPrefs = {
   display: { ...DEFAULT_WIDGET_DISPLAY },
   launch_at_login: false,
   show_widget_on_startup: true,
+  server_poll_secs: 3,
+  ssh_client: { preset: "system_default", custom_command: "" },
 };
 
 export function cloneWidgetPrefs(prefs: WidgetPrefs): WidgetPrefs {
@@ -58,6 +76,8 @@ export function cloneWidgetPrefs(prefs: WidgetPrefs): WidgetPrefs {
     display: { ...prefs.display },
     launch_at_login: prefs.launch_at_login,
     show_widget_on_startup: prefs.show_widget_on_startup,
+    server_poll_secs: prefs.server_poll_secs,
+    ssh_client: { ...prefs.ssh_client },
   };
 }
 

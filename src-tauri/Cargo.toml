@@ -1,6 +1,6 @@
 [package]
 name = "watchpost"
-version = "0.2.3"
+version = "0.2.4"
 description = "WatchPost - lightweight multi-server & local monitor"
 authors = ["Onasis Melchior"]
 edition = "2021"

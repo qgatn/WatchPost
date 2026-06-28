@@ -49,6 +49,23 @@ export function removeServer(id: string): Promise<void> {
   return invoke("remove_server", { id });
 }
 
+export interface SshOpenResult {
+  launcher: string;
+  command: string;
+}
+
+export function getSshCommand(id: string): Promise<string> {
+  return invoke<string>("get_ssh_command", { id });
+}
+
+export function openSshSession(id: string): Promise<SshOpenResult> {
+  return invoke<SshOpenResult>("open_ssh_session", { id });
+}
+
+export function openSshSessionByAlias(alias: string): Promise<SshOpenResult> {
+  return invoke<SshOpenResult>("open_ssh_session_by_alias", { alias });
+}
+
 export interface AppAbout {
   product: string;
   version: string;

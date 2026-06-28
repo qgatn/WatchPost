@@ -3,7 +3,7 @@ mod ssh;
 mod store;
 
 use serde::Serialize;
-use ssh::{DiagnoseResult, TestResult};
+use ssh::{DiagnoseResult, SshLaunchOutput, TestResult};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -114,6 +114,15 @@ fn on_window_hidden(app: &AppHandle) {
     if !any_window_visible(app) {
         app.exit(0);
     }
+}
+
+fn server_poll_ms(app: &AppHandle) -> u64 {
+    let secs = data_dir(app)
+        .ok()
+        .and_then(|d| store::load_widget_prefs(d).ok())
+        .map(|p| p.server_poll_secs.clamp(1, 60))
+        .unwrap_or(3);
+    secs * 1000
 }
 
 fn invalidate_active_users(app: &AppHandle) {
@@ -273,6 +282,42 @@ fn remove_server(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+fn server_by_id(app: &AppHandle, id: &str) -> Result<ServerEntry, String> {
+    let servers = store::load_servers(data_dir(app)?)?;
+    servers
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "server not found".to_string())
+}
+
+fn server_by_alias(app: &AppHandle, alias: &str) -> Result<ServerEntry, String> {
+    let servers = store::load_servers(data_dir(app)?)?;
+    servers
+        .into_iter()
+        .find(|s| s.alias.eq_ignore_ascii_case(alias))
+        .ok_or_else(|| "server not found".to_string())
+}
+
+#[tauri::command]
+fn get_ssh_command(app: AppHandle, id: String) -> Result<String, String> {
+    let entry = server_by_id(&app, &id)?;
+    ssh::ssh_command_for_entry(&entry)
+}
+
+#[tauri::command]
+fn open_ssh_session(app: AppHandle, id: String) -> Result<SshLaunchOutput, String> {
+    let entry = server_by_id(&app, &id)?;
+    let prefs = store::load_widget_prefs(data_dir(&app)?)?;
+    ssh::open_ssh_session(&entry, &prefs.ssh_client)
+}
+
+#[tauri::command]
+fn open_ssh_session_by_alias(app: AppHandle, alias: String) -> Result<SshLaunchOutput, String> {
+    let entry = server_by_alias(&app, &alias)?;
+    let prefs = store::load_widget_prefs(data_dir(&app)?)?;
+    ssh::open_ssh_session(&entry, &prefs.ssh_client)
+}
+
 // Connecting can block for up to CONNECT_TIMEOUT (10s). Run on a blocking
 // thread so the UI/event loop never freezes while testing a slow/bad host.
 #[tauri::command]
@@ -364,6 +409,29 @@ fn hide_widget_window(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn begin_widget_interaction(app: AppHandle) -> Result<(), String> {
+    let win = app
+        .get_webview_window("widget")
+        .ok_or_else(|| "widget window not found".to_string())?;
+    if !win.is_visible().map_err(|e| e.to_string())? {
+        return Ok(());
+    }
+    let prefs = store::load_widget_prefs(data_dir(&app)?)?;
+    if matches!(prefs.stack_mode, StackMode::Behind) {
+        // Temporarily raise the widget so context menu/actions are visible above other windows.
+        win.set_always_on_bottom(false).map_err(|e| e.to_string())?;
+        win.set_always_on_top(true).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn end_widget_interaction(app: AppHandle) -> Result<(), String> {
+    // Restore persisted stack behavior after temporary interaction lift.
+    apply_widget_prefs_to_window(&app)
+}
+
 /// Hide the widget window (no-op if already hidden).
 #[tauri::command]
 fn hide_widget(app: AppHandle) -> Result<(), String> {
@@ -421,7 +489,6 @@ fn show_main_window(app: AppHandle) -> Result<(), String> {
 }
 
 fn run_server_poller(app: AppHandle, entry: ServerEntry, stop: Arc<AtomicBool>) {
-    const POLL_MS: u64 = 2500;
     const BACKOFF_MS: u64 = 5000;
 
     #[cfg(windows)]
@@ -437,7 +504,7 @@ fn run_server_poller(app: AppHandle, entry: ServerEntry, stop: Arc<AtomicBool>) 
                 }
             }
             if !stop.load(Ordering::Relaxed) {
-                thread::sleep(Duration::from_millis(POLL_MS));
+                thread::sleep(Duration::from_millis(server_poll_ms(&app)));
             }
         }
         return;
@@ -468,7 +535,7 @@ fn run_server_poller(app: AppHandle, entry: ServerEntry, stop: Arc<AtomicBool>) 
                     break;
                 }
             }
-            thread::sleep(Duration::from_millis(POLL_MS));
+            thread::sleep(Duration::from_millis(server_poll_ms(&app)));
         }
 
         if metrics_failed && !stop.load(Ordering::Relaxed) {
@@ -522,12 +589,17 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             toggle_widget,
             hide_widget,
+            begin_widget_interaction,
+            end_widget_interaction,
             quit_app,
             is_main_visible,
             show_main_window,
             list_servers,
             add_server,
             remove_server,
+            get_ssh_command,
+            open_ssh_session,
+            open_ssh_session_by_alias,
             test_server,
             diagnose_server,
             get_ssh_setup_info,

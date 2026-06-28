@@ -168,10 +168,63 @@ pub struct WidgetPrefs {
     /// When launched at login (`--autostart`): widget only if true, main dashboard if false.
     #[serde(default = "default_show_widget_on_startup")]
     pub show_widget_on_startup: bool,
+    /// Remote server poll cadence in seconds (min 1, max 60).
+    #[serde(default = "default_server_poll_secs")]
+    pub server_poll_secs: u64,
+    #[serde(default)]
+    pub ssh_client: SshClientPrefs,
 }
 
 fn default_show_widget_on_startup() -> bool {
     true
+}
+
+fn default_server_poll_secs() -> u64 {
+    3
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SshClientPreset {
+    #[serde(rename = "system_default")]
+    SystemDefault,
+    #[serde(rename = "mac_terminal")]
+    MacTerminal,
+    #[serde(rename = "mac_i_term")]
+    MacITerm,
+    #[serde(rename = "windows_power_shell")]
+    WindowsPowerShell,
+    #[serde(rename = "windows_terminal")]
+    WindowsTerminal,
+    #[serde(rename = "moba_xterm")]
+    MobaXterm,
+    #[serde(rename = "pu_tty")]
+    PuTTY,
+    #[serde(rename = "custom")]
+    Custom,
+}
+
+impl Default for SshClientPreset {
+    fn default() -> Self {
+        Self::SystemDefault
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SshClientPrefs {
+    #[serde(default)]
+    pub preset: SshClientPreset,
+    #[serde(default)]
+    pub custom_command: String,
+}
+
+impl Default for SshClientPrefs {
+    fn default() -> Self {
+        Self {
+            preset: SshClientPreset::SystemDefault,
+            custom_command: String::new(),
+        }
+    }
 }
 
 impl Default for WidgetPrefs {
@@ -182,6 +235,8 @@ impl Default for WidgetPrefs {
             display: WidgetDisplay::default(),
             launch_at_login: false,
             show_widget_on_startup: true,
+            server_poll_secs: default_server_poll_secs(),
+            ssh_client: SshClientPrefs::default(),
         }
     }
 }
@@ -201,11 +256,13 @@ pub fn load_widget_prefs(base: PathBuf) -> Result<WidgetPrefs, String> {
 
 pub fn validate_widget_prefs(prefs: &WidgetPrefs) -> Result<(), String> {
     let s = &prefs.segments;
-    if s.cpu || s.mem || s.disk || s.net || s.users {
-        Ok(())
-    } else {
-        Err("at least one metric segment must be enabled".into())
+    if !(s.cpu || s.mem || s.disk || s.net || s.users) {
+        return Err("at least one metric segment must be enabled".into());
     }
+    if !(1..=60).contains(&prefs.server_poll_secs) {
+        return Err("server poll interval must be between 1 and 60 seconds".into());
+    }
+    Ok(())
 }
 
 pub fn save_widget_prefs(base: PathBuf, prefs: &WidgetPrefs) -> Result<(), String> {
@@ -247,6 +304,8 @@ mod tests {
             display: WidgetDisplay::default(),
             launch_at_login: false,
             show_widget_on_startup: true,
+            server_poll_secs: 3,
+            ssh_client: SshClientPrefs::default(),
         };
         assert!(validate_widget_prefs(&prefs).is_err());
     }
@@ -256,5 +315,17 @@ mod tests {
         let prefs = WidgetPrefs::default();
         assert!(!prefs.launch_at_login);
         assert!(prefs.show_widget_on_startup);
+        assert_eq!(prefs.server_poll_secs, 3);
+        assert_eq!(prefs.ssh_client.preset, SshClientPreset::SystemDefault);
+        assert!(prefs.ssh_client.custom_command.is_empty());
+    }
+
+    #[test]
+    fn widget_prefs_rejects_out_of_range_poll_secs() {
+        let mut prefs = WidgetPrefs::default();
+        prefs.server_poll_secs = 0;
+        assert!(validate_widget_prefs(&prefs).is_err());
+        prefs.server_poll_secs = 61;
+        assert!(validate_widget_prefs(&prefs).is_err());
     }
 }

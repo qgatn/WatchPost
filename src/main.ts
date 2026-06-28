@@ -26,6 +26,8 @@ import {
   getAppAbout,
   getSshSetupInfo,
   listServers,
+  openSshSession,
+  openSshSessionByAlias,
   removeServer,
   testServer,
   type DiagnoseResult,
@@ -45,6 +47,7 @@ import {
   getWidgetPrefs,
   setWidgetPrefs,
   stackModeHint,
+  type SshClientPreset,
   type DisplaySegmentKey,
   type MetricDisplay,
   type MetricSegmentKey,
@@ -251,6 +254,7 @@ function renderMain(root: HTMLElement) {
         <div class="topbar-actions">
           <span class="status-pill"><span class="dot" id="status-dot"></span><span id="status-text">live</span></span>
           <button type="button" id="add-server-btn" class="btn-ghost">+ Add server</button>
+          <button type="button" id="open-ssh-btn" class="btn-ghost hidden">Open SSH</button>
           <button type="button" id="diag-btn" class="btn-ghost hidden">Diagnostics</button>
           <button type="button" id="settings-btn" class="btn-ghost btn-icon" title="Settings" aria-label="Settings">⚙</button>
           <button type="button" id="widget-btn">Open Widget</button>
@@ -279,18 +283,10 @@ function renderMain(root: HTMLElement) {
               <button type="button" class="settings-tab active" data-settings-tab="general" role="tab">General</button>
               <button type="button" class="settings-tab" data-settings-tab="widget" role="tab">Widget</button>
               <button type="button" class="settings-tab" data-settings-tab="servers" role="tab">Servers</button>
+              <button type="button" class="settings-tab" data-settings-tab="about" role="tab">About</button>
             </nav>
             <div class="modal-panel-scroll settings-tab-panels">
               <div class="settings-tab-panel" data-settings-panel="general" role="tabpanel">
-                <div class="settings-section">
-                  <h3>About</h3>
-                  <div class="about-block" id="about-block">
-                    <p class="about-product" id="about-product">WatchPost</p>
-                    <p class="about-meta" id="about-version">Version —</p>
-                    <p class="about-meta" id="about-author">—</p>
-                    <p class="about-meta about-muted" id="about-build">—</p>
-                  </div>
-                </div>
                 <div class="settings-section">
                   <h3>Startup</h3>
                   <div class="checkbox-grid checkbox-grid-single">
@@ -303,6 +299,27 @@ function renderMain(root: HTMLElement) {
                       <button type="button" class="seg-opt" data-autostart-open="main">App</button>
                     </div>
                   </div>
+                </div>
+                <div class="settings-section">
+                  <h3>Polling</h3>
+                  <label class="settings-field">
+                    Server poll interval (seconds)
+                    <input id="server-poll-secs" type="number" min="1" max="60" step="1" />
+                  </label>
+                  <p class="modal-hint">Applies to saved remote servers. Range: 1 to 60 seconds.</p>
+                </div>
+                <div class="settings-section">
+                  <h3>SSH client</h3>
+                  <p class="modal-hint">Choose which external app opens interactive SSH sessions.</p>
+                  <label class="settings-field">
+                    Client
+                    <select id="ssh-client-preset"></select>
+                  </label>
+                  <label class="settings-field hidden" id="ssh-custom-command-wrap">
+                    Custom command template
+                    <input id="ssh-custom-command" placeholder='Example: wt.exe new-tab {ssh_cmd}' />
+                  </label>
+                  <p class="modal-hint" id="ssh-template-hint">Placeholders: {ssh_cmd}, {user}, {host}, {port}, {key_path}</p>
                 </div>
               </div>
               <div class="settings-tab-panel hidden" data-settings-panel="widget" role="tabpanel">
@@ -352,6 +369,21 @@ function renderMain(root: HTMLElement) {
                   <p class="modal-hint">Add or remove servers monitored by WatchPost. Removing stops polling and deletes the entry on this device.</p>
                   <div id="servers-list" class="servers-list"></div>
                   <p class="modal-hint hidden" id="servers-empty">No saved servers yet.</p>
+                </div>
+              </div>
+              <div class="settings-tab-panel hidden" data-settings-panel="about" role="tabpanel">
+                <div class="settings-section">
+                  <h3>About</h3>
+                  <div class="about-block" id="about-block">
+                    <p class="about-product" id="about-product">WatchPost</p>
+                    <p class="about-meta" id="about-version">Version —</p>
+                    <p class="about-meta" id="about-author">—</p>
+                    <p class="about-meta about-muted" id="about-build">—</p>
+                  </div>
+                  <p class="modal-hint">Project links</p>
+                  <div class="about-links">
+                    <a href="https://github.com/qgatn/WatchPost" target="_blank" rel="noreferrer">GitHub Repository</a>
+                  </div>
                 </div>
               </div>
             </div>
@@ -509,6 +541,7 @@ function renderMain(root: HTMLElement) {
   let diskSectionKey = "";
   let diagLogLines: string[] = [];
   let widgetPrefs: WidgetPrefs = cloneWidgetPrefs(DEFAULT_WIDGET_PREFS);
+  const isWindows = navigator.userAgent.toLowerCase().includes("windows");
 
   function appendDiag(line: string) {
     diagLogLines.push(line);
@@ -528,8 +561,15 @@ function renderMain(root: HTMLElement) {
     $("diag-panel").setAttribute("aria-hidden", "true");
   }
 
-  function updateDiagButtonVisibility() {
-    $("diag-btn").classList.toggle("hidden", selectedSource === "local");
+  function selectedRemoteEntry(): ServerEntry | null {
+    if (selectedSource === "local") return null;
+    return savedServers.find((s) => s.alias === selectedSource) ?? null;
+  }
+
+  function updateRemoteActionButtons() {
+    const remote = selectedRemoteEntry();
+    $("diag-btn").classList.toggle("hidden", !remote);
+    $("open-ssh-btn").classList.toggle("hidden", !remote);
   }
 
   function renderDiagStatusForSource(source: string) {
@@ -601,7 +641,7 @@ function renderMain(root: HTMLElement) {
       sel.value = prev;
     }
     selectedSource = sel.value;
-    updateDiagButtonVisibility();
+    updateRemoteActionButtons();
   }
 
   async function loadServersList() {
@@ -658,7 +698,7 @@ function renderMain(root: HTMLElement) {
     returnToSettingsServers = false;
   }
 
-  type SettingsTab = "general" | "widget" | "servers";
+  type SettingsTab = "general" | "widget" | "servers" | "about";
   let returnToSettingsServers = false;
 
   function setSettingsTab(tab: SettingsTab) {
@@ -684,6 +724,35 @@ function renderMain(root: HTMLElement) {
       btn.disabled = !launchEnabled;
     });
     $("autostart-open-wrap").classList.toggle("disabled", !launchEnabled);
+    ($("server-poll-secs") as HTMLInputElement).value = String(widgetPrefs.server_poll_secs);
+    const presetSelect = $("ssh-client-preset") as HTMLSelectElement;
+    if (presetSelect.options.length === 0) {
+      const options = isWindows
+        ? [
+            ["system_default", "System default (Recommended)"],
+            ["windows_power_shell", "PowerShell"],
+            ["windows_terminal", "Windows Terminal"],
+            ["moba_xterm", "MobaXterm"],
+            ["pu_tty", "PuTTY"],
+            ["custom", "Custom command"],
+          ]
+        : [
+            ["system_default", "System default (Recommended)"],
+            ["mac_terminal", "Terminal.app"],
+            ["mac_i_term", "iTerm"],
+            ["custom", "Custom command"],
+          ];
+      for (const [value, label] of options) {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = label;
+        presetSelect.appendChild(opt);
+      }
+    }
+    presetSelect.value = widgetPrefs.ssh_client.preset;
+    ($("ssh-custom-command") as HTMLInputElement).value = widgetPrefs.ssh_client.custom_command;
+    const custom = widgetPrefs.ssh_client.preset === "custom";
+    $("ssh-custom-command-wrap").classList.toggle("hidden", !custom);
   }
 
   async function loadAboutBlock() {
@@ -715,7 +784,13 @@ function renderMain(root: HTMLElement) {
           <span class="server-alias">${escapeHtml(s.alias)}</span>
           <span class="server-detail">${escapeHtml(s.user)}@${escapeHtml(s.host)}:${s.port}</span>
         </div>
-        <button type="button" class="btn-ghost btn-danger server-remove">Remove</button>`;
+        <div class="server-row-actions">
+          <button type="button" class="btn-ghost server-open-ssh">Open SSH</button>
+          <button type="button" class="btn-ghost btn-danger server-remove">Remove</button>
+        </div>`;
+      row.querySelector(".server-open-ssh")?.addEventListener("click", () => {
+        void openSshSession(s.id).catch((e) => alert(`Could not open SSH: ${e}`));
+      });
       row.querySelector(".server-remove")?.addEventListener("click", () => {
         void handleRemoveServer(s);
       });
@@ -734,7 +809,7 @@ function renderMain(root: HTMLElement) {
         selectedSource = "local";
         const sel = $("source-select") as HTMLSelectElement;
         sel.value = "local";
-        updateDiagButtonVisibility();
+        updateRemoteActionButtons();
         cpuHist.clear();
         netRxHist.clear();
         netTxHist.clear();
@@ -773,6 +848,11 @@ function renderMain(root: HTMLElement) {
       const key = row.getAttribute("data-display-row") as DisplaySegmentKey;
       row.classList.toggle("disabled", !widgetPrefs.segments[key]);
     });
+  }
+
+  function clampPollSecs(raw: number): number {
+    if (!Number.isFinite(raw)) return widgetPrefs.server_poll_secs;
+    return Math.min(60, Math.max(1, Math.round(raw)));
   }
 
   async function openSettings(tab: SettingsTab = "general") {
@@ -1013,6 +1093,29 @@ function renderMain(root: HTMLElement) {
     applyWidgetPrefs({ ...widgetPrefs, launch_at_login: enabled }).catch(() => {});
   });
 
+  $("server-poll-secs").addEventListener("change", () => {
+    const input = $("server-poll-secs") as HTMLInputElement;
+    const secs = clampPollSecs(Number(input.value));
+    input.value = String(secs);
+    applyWidgetPrefs({ ...widgetPrefs, server_poll_secs: secs }).catch(() => {});
+  });
+
+  $("ssh-client-preset").addEventListener("change", () => {
+    const preset = ($("ssh-client-preset") as HTMLSelectElement).value as SshClientPreset;
+    applyWidgetPrefs({
+      ...widgetPrefs,
+      ssh_client: { ...widgetPrefs.ssh_client, preset },
+    }).catch(() => {});
+  });
+
+  $("ssh-custom-command").addEventListener("change", () => {
+    const custom_command = ($("ssh-custom-command") as HTMLInputElement).value.trim();
+    applyWidgetPrefs({
+      ...widgetPrefs,
+      ssh_client: { ...widgetPrefs.ssh_client, custom_command },
+    }).catch(() => {});
+  });
+
   document.querySelectorAll("#autostart-open-control .seg-opt").forEach((btn) => {
     btn.addEventListener("click", () => {
       if (!widgetPrefs.launch_at_login) return;
@@ -1049,7 +1152,7 @@ function renderMain(root: HTMLElement) {
 
   $("source-select").addEventListener("change", () => {
     selectedSource = ($("source-select") as HTMLSelectElement).value;
-    updateDiagButtonVisibility();
+    updateRemoteActionButtons();
     cpuHist.clear();
     netRxHist.clear();
     netTxHist.clear();
@@ -1065,6 +1168,11 @@ function renderMain(root: HTMLElement) {
   });
 
   $("add-server-btn").addEventListener("click", () => openModal());
+  $("open-ssh-btn").addEventListener("click", () => {
+    const entry = selectedRemoteEntry();
+    if (!entry) return;
+    openSshSession(entry.id).catch((e) => alert(`Could not open SSH: ${e}`));
+  });
   $("modal-cancel").addEventListener("click", () => closeModal());
   document.querySelectorAll("[data-close-modal]").forEach((el) => {
     el.addEventListener("click", () => closeModal());
@@ -1222,8 +1330,10 @@ function renderWidget(root: HTMLElement) {
   const ctxMenu = document.getElementById("widget-ctx-menu")!;
   const win = getCurrentWindow();
   const knownSources = new Set<string>();
+  const knownRemoteAliases = new Set<string>();
   let widgetPrefs: WidgetPrefs = cloneWidgetPrefs(DEFAULT_WIDGET_PREFS);
   let ctxMenuOpen = false;
+  let ctxSourceAlias: string | null = null;
 
   function measureWindowSize(): { w: number; h: number } {
     const stripW = Math.ceil(wrap.scrollWidth + 8);
@@ -1251,18 +1361,26 @@ function renderWidget(root: HTMLElement) {
 
   function hideCtxMenu() {
     ctxMenuOpen = false;
+    ctxSourceAlias = null;
     ctxBackdrop.classList.add("hidden");
     ctxBackdrop.setAttribute("aria-hidden", "true");
     ctxMenu.classList.add("hidden");
     ctxMenu.setAttribute("aria-hidden", "true");
+    invoke("end_widget_interaction").catch(() => {});
     applyWindowSize();
   }
 
-  function fillCtxMenu(mainOpen: boolean) {
+  function fillCtxMenu(mainOpen: boolean, sourceAlias: string | null) {
+    const remote = sourceAlias && sourceAlias !== "local" && knownRemoteAliases.has(sourceAlias);
+    const openSshItem = remote
+      ? `<button type="button" data-ctx="open-ssh" role="menuitem">Open SSH…</button>`
+      : "";
     ctxMenu.innerHTML = mainOpen
-      ? `<button type="button" data-ctx="hide" role="menuitem">Hide widget</button>
+      ? `${openSshItem}
+         <button type="button" data-ctx="hide" role="menuitem">Hide widget</button>
          <button type="button" data-ctx="quit" class="danger" role="menuitem">Quit WatchPost</button>`
-      : `<button type="button" data-ctx="open" role="menuitem">Open App</button>
+      : `${openSshItem}
+         <button type="button" data-ctx="open" role="menuitem">Open App</button>
          <button type="button" data-ctx="close" class="danger" role="menuitem">Close</button>`;
   }
 
@@ -1281,9 +1399,11 @@ function renderWidget(root: HTMLElement) {
     ctxMenu.style.top = `${top}px`;
   }
 
-  async function showCtxMenu(x: number, y: number) {
+  async function showCtxMenu(x: number, y: number, sourceAlias: string | null) {
+    await invoke("begin_widget_interaction").catch(() => {});
     const mainOpen = await invoke<boolean>("is_main_visible").catch(() => false);
-    fillCtxMenu(mainOpen);
+    ctxSourceAlias = sourceAlias;
+    fillCtxMenu(mainOpen, sourceAlias);
     ctxMenuOpen = true;
     ctxBackdrop.classList.remove("hidden");
     ctxBackdrop.setAttribute("aria-hidden", "false");
@@ -1294,13 +1414,15 @@ function renderWidget(root: HTMLElement) {
   }
 
   stack.addEventListener("contextmenu", (e) => {
-    if (!(e.target as HTMLElement).closest(".widget-strip")) return;
+    const strip = (e.target as HTMLElement).closest<HTMLElement>(".widget-strip");
+    if (!strip) return;
     e.preventDefault();
     if (ctxMenuOpen) {
       hideCtxMenu();
       return;
     }
-    showCtxMenu(e.clientX, e.clientY).catch(() => {});
+    const sourceAlias = strip.getAttribute("data-source");
+    showCtxMenu(e.clientX, e.clientY, sourceAlias).catch(() => {});
   });
 
   ctxBackdrop.addEventListener("pointerdown", (e) => {
@@ -1327,6 +1449,11 @@ function renderWidget(root: HTMLElement) {
         break;
       case "open":
         invoke("show_main_window").catch(() => {});
+        break;
+      case "open-ssh":
+        if (ctxSourceAlias && ctxSourceAlias !== "local") {
+          openSshSessionByAlias(ctxSourceAlias).catch(() => {});
+        }
         break;
       case "close":
         // Main is hidden — hiding the widget quits the app (M3c).
@@ -1391,6 +1518,8 @@ function renderWidget(root: HTMLElement) {
 
   async function refreshSources() {
     const servers = await listServers().catch(() => [] as ServerEntry[]);
+    knownRemoteAliases.clear();
+    for (const server of servers) knownRemoteAliases.add(server.alias);
     const sources = [
       { source: "local", label: "Local" },
       ...servers.map((s) => ({ source: s.alias, label: s.alias })),
