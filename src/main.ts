@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -799,8 +800,9 @@ function renderMain(root: HTMLElement) {
   }
 
   async function handleRemoveServer(entry: ServerEntry) {
-    const ok = confirm(
+    const ok = await confirmDialog(
       `Remove "${entry.alias}" (${entry.user}@${entry.host}:${entry.port})?\n\nThis stops monitoring and removes the server from WatchPost.`,
+      { title: "Remove server", kind: "warning", okLabel: "Remove", cancelLabel: "Cancel" },
     );
     if (!ok) return;
     try {

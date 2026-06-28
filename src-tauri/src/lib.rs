@@ -584,6 +584,7 @@ pub fn run() {
                 .args([AUTOSTART_ARG])
                 .build(),
         )
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(PollerRegistry::new())
         .invoke_handler(tauri::generate_handler![
