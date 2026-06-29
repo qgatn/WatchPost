@@ -68,9 +68,14 @@ fn ssh_shell_path(path: &Path) -> String {
     }
 }
 
-fn build_ssh_invocation(entry: &ServerEntry) -> Result<SshInvocation, String> {
+fn build_ssh_invocation_core(entry: &ServerEntry, interactive: bool) -> Result<SshInvocation, String> {
     let user_host = format!("{}@{}", entry.user, entry.host);
-    let mut args = vec!["-p".to_string(), entry.port.to_string()];
+    let mut args = Vec::new();
+    if interactive {
+        args.push("-t".to_string());
+    }
+    args.push("-p".to_string());
+    args.push(entry.port.to_string());
     if matches!(entry.auth, AuthMethod::KeyFile) {
         let path = entry
             .key_path
@@ -80,7 +85,7 @@ fn build_ssh_invocation(entry: &ServerEntry) -> Result<SshInvocation, String> {
         args.push("-i".to_string());
         args.push(ssh_shell_path(&expanded));
     }
-    args.push(user_host.clone());
+    args.push(user_host);
     let cmd = std::iter::once("ssh".to_string())
         .chain(args.iter().cloned())
         .map(|v| shell_quote(&v))
@@ -89,6 +94,29 @@ fn build_ssh_invocation(entry: &ServerEntry) -> Result<SshInvocation, String> {
     Ok(SshInvocation {
         display_cmd: cmd,
     })
+}
+
+fn build_ssh_invocation(entry: &ServerEntry) -> Result<SshInvocation, String> {
+    build_ssh_invocation_core(entry, false)
+}
+
+/// Interactive Open SSH — allocate a TTY so the remote shell stays open.
+fn build_interactive_ssh_invocation(entry: &ServerEntry) -> Result<SshInvocation, String> {
+    build_ssh_invocation_core(entry, true)
+}
+
+/// MobaXterm runs Cygwin `ssh`. A Windows `SSH_AUTH_SOCK` (OpenSSH pipe or stale Cygwin
+/// socket) makes the client use an agent proxy that fails with `/dev/ptmx: Permission denied`.
+/// Prefix clears the socket for this command only (standard bash); `-i` supplies the key.
+#[cfg(windows)]
+fn build_mobaxterm_interactive_ssh_invocation(entry: &ServerEntry) -> Result<SshInvocation, String> {
+    let inv = build_interactive_ssh_invocation(entry)?;
+    let display_cmd = if matches!(entry.auth, AuthMethod::KeyFile) {
+        format!("SSH_AUTH_SOCK= {}", inv.display_cmd)
+    } else {
+        inv.display_cmd
+    };
+    Ok(SshInvocation { display_cmd })
 }
 
 fn resolve_preset(preset: SshClientPreset) -> SshClientPreset {
@@ -207,8 +235,15 @@ pub fn normalize_ssh_client_prefs(prefs: &mut SshClientPrefs) {
 }
 
 pub fn open_ssh_session(entry: &ServerEntry, prefs: &SshClientPrefs) -> Result<SshLaunchOutput, String> {
-    let inv = build_ssh_invocation(entry)?;
     let preset = resolve_preset(prefs.preset);
+    #[cfg(target_os = "windows")]
+    let inv = if preset == SshClientPreset::MobaXterm {
+        build_mobaxterm_interactive_ssh_invocation(entry)?
+    } else {
+        build_interactive_ssh_invocation(entry)?
+    };
+    #[cfg(not(target_os = "windows"))]
+    let inv = build_interactive_ssh_invocation(entry)?;
 
     #[cfg(target_os = "macos")]
     {
@@ -240,11 +275,19 @@ pub fn open_ssh_session(entry: &ServerEntry, prefs: &SshClientPrefs) -> Result<S
     {
         let mut cmd = match preset {
             SshClientPreset::WindowsPowerShell => {
+                use std::os::windows::process::CommandExt;
+                // Debug builds run as a console app (npm run start); without this flag
+                // PowerShell inherits the dev terminal instead of opening its own window.
+                const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
                 let mut c = Command::new("powershell");
+                c.creation_flags(CREATE_NEW_CONSOLE);
                 c.arg("-NoExit").arg("-Command").arg(&inv.display_cmd);
                 c
             }
             SshClientPreset::MobaXterm => {
+                use std::os::windows::process::CommandExt;
+                // Keep MobaXterm/ssh output out of the dev console (npm run start).
+                const DETACHED_PROCESS: u32 = 0x0000_0008;
                 let exe = mobaxterm::resolve_moba_xterm_path(prefs.moba_xterm_path.as_deref())
                     .ok_or_else(|| {
                         String::from(
@@ -252,6 +295,9 @@ pub fn open_ssh_session(entry: &ServerEntry, prefs: &SshClientPrefs) -> Result<S
                         )
                     })?;
                 let mut c = Command::new(exe);
+                c.creation_flags(DETACHED_PROCESS);
+                // Don't pass a Windows OpenSSH agent socket into MobaXterm — Cygwin ssh breaks on it.
+                c.env_remove("SSH_AUTH_SOCK");
                 c.arg("-newtab").arg(&inv.display_cmd);
                 c
             }
@@ -835,6 +881,48 @@ mod tests {
         let inv = build_ssh_invocation(&entry).expect("invocation");
         assert!(inv.display_cmd.contains("-i C:/Users/me/.ssh/id_ed25519"));
         assert!(!inv.display_cmd.contains('\\'));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn mobaxterm_interactive_ssh_clears_agent_socket_for_key_file() {
+        let entry = sample_entry(AuthMethod::KeyFile, Some("~/keys/id_ed25519"));
+        let inv = build_mobaxterm_interactive_ssh_invocation(&entry).expect("invocation");
+        assert!(inv.display_cmd.starts_with("SSH_AUTH_SOCK= ssh -t "));
+        assert!(inv.display_cmd.contains(" -i "));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn mobaxterm_interactive_ssh_keeps_agent_for_agent_auth() {
+        let entry = sample_entry(AuthMethod::Agent, None);
+        let inv = build_mobaxterm_interactive_ssh_invocation(&entry).expect("invocation");
+        assert!(!inv.display_cmd.contains("SSH_AUTH_SOCK"));
+        assert!(inv.display_cmd.starts_with("ssh -t "));
+    }
+
+    #[test]
+    fn interactive_ssh_invocation_allocates_tty() {
+        let entry = sample_entry(AuthMethod::KeyFile, Some("~/keys/id_ed25519"));
+        let inv = build_interactive_ssh_invocation(&entry).expect("invocation");
+        assert!(inv.display_cmd.contains("ssh -t "));
+        assert!(inv.display_cmd.contains(" -i "));
+        assert!(inv.display_cmd.contains("deploy@example.com"));
+    }
+
+    #[test]
+    fn interactive_ssh_invocation_omits_tty_for_display_commands() {
+        let entry = sample_entry(AuthMethod::Agent, None);
+        let inv = build_interactive_ssh_invocation(&entry).expect("invocation");
+        assert!(inv.display_cmd.contains("ssh -t "));
+        assert!(!inv.display_cmd.contains(" -i "));
+    }
+
+    #[test]
+    fn display_ssh_invocation_has_no_tty_flag() {
+        let entry = sample_entry(AuthMethod::Agent, None);
+        let inv = build_ssh_invocation(&entry).expect("invocation");
+        assert!(!inv.display_cmd.contains(" -t "));
     }
 
     #[test]
