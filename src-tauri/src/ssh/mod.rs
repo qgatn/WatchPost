@@ -2,6 +2,8 @@
 
 mod diagnose;
 mod linux;
+#[cfg(windows)]
+mod mobaxterm;
 
 pub use diagnose::{diagnose_connection, DiagnoseResult};
 
@@ -41,10 +43,6 @@ pub struct SshLaunchOutput {
 }
 
 struct SshInvocation {
-    #[cfg(target_os = "windows")]
-    user_host: String,
-    #[cfg(target_os = "windows")]
-    args: Vec<String>,
     display_cmd: String,
 }
 
@@ -57,6 +55,19 @@ fn shell_quote(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// Path form safe for embedding in a shell command (OpenSSH accepts `/` on Windows).
+fn ssh_shell_path(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        return s.replace('\\', "/");
+    }
+    #[cfg(not(windows))]
+    {
+        s.into_owned()
+    }
+}
+
 fn build_ssh_invocation(entry: &ServerEntry) -> Result<SshInvocation, String> {
     let user_host = format!("{}@{}", entry.user, entry.host);
     let mut args = vec!["-p".to_string(), entry.port.to_string()];
@@ -67,7 +78,7 @@ fn build_ssh_invocation(entry: &ServerEntry) -> Result<SshInvocation, String> {
             .ok_or_else(|| "key file path required".to_string())?;
         let expanded = expand_home(path);
         args.push("-i".to_string());
-        args.push(expanded.to_string_lossy().to_string());
+        args.push(ssh_shell_path(&expanded));
     }
     args.push(user_host.clone());
     let cmd = std::iter::once("ssh".to_string())
@@ -76,17 +87,14 @@ fn build_ssh_invocation(entry: &ServerEntry) -> Result<SshInvocation, String> {
         .collect::<Vec<_>>()
         .join(" ");
     Ok(SshInvocation {
-        #[cfg(target_os = "windows")]
-        user_host,
-        #[cfg(target_os = "windows")]
-        args,
         display_cmd: cmd,
     })
 }
 
 fn resolve_preset(preset: SshClientPreset) -> SshClientPreset {
-    if !matches!(preset, SshClientPreset::SystemDefault) {
-        return preset;
+    match preset {
+        SshClientPreset::SystemDefault => {}
+        other => return migrate_legacy_preset(other),
     }
     #[cfg(target_os = "macos")]
     {
@@ -98,7 +106,37 @@ fn resolve_preset(preset: SshClientPreset) -> SshClientPreset {
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        SshClientPreset::Custom
+        SshClientPreset::MacTerminal
+    }
+}
+
+fn migrate_legacy_preset(preset: SshClientPreset) -> SshClientPreset {
+    #[cfg(target_os = "macos")]
+    {
+        return match preset {
+            SshClientPreset::MacITerm
+            | SshClientPreset::Custom
+            | SshClientPreset::WindowsPowerShell
+            | SshClientPreset::WindowsTerminal
+            | SshClientPreset::MobaXterm
+            | SshClientPreset::PuTTY => SshClientPreset::MacTerminal,
+            other => other,
+        };
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return match preset {
+            SshClientPreset::WindowsTerminal
+            | SshClientPreset::PuTTY
+            | SshClientPreset::Custom
+            | SshClientPreset::MacTerminal
+            | SshClientPreset::MacITerm => SshClientPreset::WindowsPowerShell,
+            other => other,
+        };
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        preset
     }
 }
 
@@ -107,12 +145,13 @@ fn escape_applescript(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+#[allow(dead_code)]
 fn resolve_custom_template(tpl: &str, entry: &ServerEntry, ssh_cmd: &str) -> String {
     let key_path = entry
         .key_path
         .as_deref()
         .map(expand_home)
-        .map(|p| p.to_string_lossy().to_string())
+        .map(|p| ssh_shell_path(&p))
         .unwrap_or_default();
     tpl.replace("{ssh_cmd}", ssh_cmd)
         .replace("{user}", &entry.user)
@@ -123,6 +162,48 @@ fn resolve_custom_template(tpl: &str, entry: &ServerEntry, ssh_cmd: &str) -> Str
 
 pub fn ssh_command_for_entry(entry: &ServerEntry) -> Result<String, String> {
     Ok(build_ssh_invocation(entry)?.display_cmd)
+}
+
+#[derive(Serialize)]
+pub struct SshClientInfo {
+    pub moba_xterm_available: bool,
+    pub moba_xterm_path: Option<String>,
+    pub moba_xterm_user_configured: bool,
+}
+
+pub fn ssh_client_info(prefs: &SshClientPrefs) -> SshClientInfo {
+    #[cfg(windows)]
+    {
+        let user_configured = prefs
+            .moba_xterm_path
+            .as_deref()
+            .is_some_and(|p| !p.trim().is_empty());
+        let resolved = mobaxterm::resolve_moba_xterm_path(prefs.moba_xterm_path.as_deref());
+        SshClientInfo {
+            moba_xterm_available: resolved.is_some(),
+            moba_xterm_path: resolved.map(|p| p.to_string_lossy().into_owned()),
+            moba_xterm_user_configured: user_configured,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = prefs;
+        SshClientInfo {
+            moba_xterm_available: false,
+            moba_xterm_path: None,
+            moba_xterm_user_configured: false,
+        }
+    }
+}
+
+pub fn normalize_ssh_client_prefs(prefs: &mut SshClientPrefs) {
+    prefs.preset = resolve_preset(prefs.preset);
+    #[cfg(windows)]
+    if prefs.preset == SshClientPreset::MobaXterm
+        && mobaxterm::resolve_moba_xterm_path(prefs.moba_xterm_path.as_deref()).is_none()
+    {
+        prefs.preset = SshClientPreset::WindowsPowerShell;
+    }
 }
 
 pub fn open_ssh_session(entry: &ServerEntry, prefs: &SshClientPrefs) -> Result<SshLaunchOutput, String> {
@@ -143,34 +224,14 @@ pub fn open_ssh_session(entry: &ServerEntry, prefs: &SshClientPrefs) -> Result<S
                     .arg("tell application \"Terminal\" to activate");
                 c
             }
-            SshClientPreset::MacITerm => {
-                let mut c = Command::new("osascript");
-                let script = format!(
-                    "tell application \"iTerm\" to create window with default profile command \"{}\"",
-                    escape_applescript(&inv.display_cmd)
-                );
-                c.arg("-e").arg(script);
-                c.arg("-e").arg("tell application \"iTerm\" to activate");
-                c
-            }
-            SshClientPreset::Custom => {
-                let tpl = prefs.custom_command.trim();
-                if tpl.is_empty() {
-                    return Err("custom SSH launch command is empty".into());
-                }
-                let resolved = resolve_custom_template(tpl, entry, &inv.display_cmd);
-                let mut c = Command::new("sh");
-                c.arg("-lc").arg(resolved);
-                c
-            }
             _ => {
-                return Err("selected SSH client preset is not available on macOS".into());
+                return Err("only Terminal.app is supported on macOS".into());
             }
         };
         cmd.spawn()
             .map_err(|e| format!("failed to launch SSH client: {e}"))?;
         return Ok(SshLaunchOutput {
-            launcher: format!("{preset:?}"),
+            launcher: "MacTerminal".into(),
             command: inv.display_cmd,
         });
     }
@@ -183,44 +244,19 @@ pub fn open_ssh_session(entry: &ServerEntry, prefs: &SshClientPrefs) -> Result<S
                 c.arg("-NoExit").arg("-Command").arg(&inv.display_cmd);
                 c
             }
-            SshClientPreset::WindowsTerminal => {
-                let mut c = Command::new("wt.exe");
-                c.arg("new-tab").arg("ssh");
-                for arg in &inv.args {
-                    c.arg(arg);
-                }
-                c
-            }
             SshClientPreset::MobaXterm => {
-                let mut c = Command::new(r"C:\Program Files\MobaXterm\MobaXterm.exe");
+                let exe = mobaxterm::resolve_moba_xterm_path(prefs.moba_xterm_path.as_deref())
+                    .ok_or_else(|| {
+                        String::from(
+                            "MobaXterm not found — open Settings → General, click Locate MobaXterm…, or switch to PowerShell.",
+                        )
+                    })?;
+                let mut c = Command::new(exe);
                 c.arg("-newtab").arg(&inv.display_cmd);
                 c
             }
-            SshClientPreset::PuTTY => {
-                let mut c = Command::new("putty.exe");
-                c.arg("-ssh")
-                    .arg(&inv.user_host)
-                    .arg("-P")
-                    .arg(entry.port.to_string());
-                if matches!(entry.auth, AuthMethod::KeyFile) {
-                    if let Some(path) = entry.key_path.as_deref().map(expand_home) {
-                        c.arg("-i").arg(path);
-                    }
-                }
-                c
-            }
-            SshClientPreset::Custom => {
-                let tpl = prefs.custom_command.trim();
-                if tpl.is_empty() {
-                    return Err("custom SSH launch command is empty".into());
-                }
-                let resolved = resolve_custom_template(tpl, entry, &inv.display_cmd);
-                let mut c = Command::new("cmd");
-                c.arg("/C").arg(resolved);
-                c
-            }
             _ => {
-                return Err("selected SSH client preset is not available on Windows".into());
+                return Err("only PowerShell and MobaXterm are supported on Windows".into());
             }
         };
         cmd.spawn()
@@ -783,6 +819,22 @@ mod tests {
         assert!(inv.display_cmd.contains(" -i "));
         assert!(inv.display_cmd.contains("ssh "));
         assert!(inv.display_cmd.contains("deploy@example.com"));
+    }
+
+    #[test]
+    fn build_ssh_invocation_uses_forward_slashes_for_windows_key_paths() {
+        let entry = ServerEntry {
+            id: "1".into(),
+            alias: "prod".into(),
+            host: "example.com".into(),
+            port: 22,
+            user: "deploy".into(),
+            auth: AuthMethod::KeyFile,
+            key_path: Some(r"C:\Users\me\.ssh\id_ed25519".into()),
+        };
+        let inv = build_ssh_invocation(&entry).expect("invocation");
+        assert!(inv.display_cmd.contains("-i C:/Users/me/.ssh/id_ed25519"));
+        assert!(!inv.display_cmd.contains('\\'));
     }
 
     #[test]

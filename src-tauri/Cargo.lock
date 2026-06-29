@@ -4417,6 +4417,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "uuid",
+ "winreg 0.55.0",
 ]
 
 [[package]]

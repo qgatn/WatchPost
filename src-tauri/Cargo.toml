@@ -32,3 +32,6 @@ uuid = { version = "1", features = ["v4"] }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-autostart = "2"
 
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+

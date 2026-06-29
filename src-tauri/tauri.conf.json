@@ -37,6 +37,18 @@
         "shadow": false,
         "focus": false,
         "visible": false
+      },
+      {
+        "label": "widget-settings",
+        "title": "WatchPost Widget Settings",
+        "url": "index.html",
+        "width": 400,
+        "height": 520,
+        "minWidth": 360,
+        "minHeight": 420,
+        "resizable": true,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {

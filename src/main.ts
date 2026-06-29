@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
+import { confirm as confirmDialog, open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -39,23 +39,22 @@ import {
 } from "./servers";
 import { isStale } from "./status";
 import {
-  canDisableSegment,
   cloneWidgetPrefs,
-  countEnabledMetrics,
   DEFAULT_WIDGET_PREFS,
-  DISPLAY_SEGMENT_KEYS,
-  DISPLAY_SEGMENT_LABELS,
+  effectiveWindowsSshPreset,
+  getSshClientInfo,
   getWidgetPrefs,
   setWidgetPrefs,
-  stackModeHint,
+  type SshClientInfo,
   type SshClientPreset,
-  type DisplaySegmentKey,
-  type MetricDisplay,
-  type MetricSegmentKey,
-  type StackMode,
   type WidgetPrefs,
 } from "./widgetPrefs";
 import { widgetDisplayLabel, widgetStripHtml } from "./widgetStrip";
+import {
+  bindWidgetSettingsInContainer,
+  syncWidgetSettingsInContainer,
+  widgetSettingsBodyHtml,
+} from "./widgetSettingsUi";
 
 interface DiskInfo {
   name: string;
@@ -311,55 +310,29 @@ function renderMain(root: HTMLElement) {
                 </div>
                 <div class="settings-section">
                   <h3>SSH client</h3>
-                  <p class="modal-hint">Choose which external app opens interactive SSH sessions.</p>
-                  <label class="settings-field">
-                    Client
-                    <select id="ssh-client-preset"></select>
-                  </label>
-                  <label class="settings-field hidden" id="ssh-custom-command-wrap">
-                    Custom command template
-                    <input id="ssh-custom-command" placeholder='Example: wt.exe new-tab {ssh_cmd}' />
-                  </label>
-                  <p class="modal-hint" id="ssh-template-hint">Placeholders: {ssh_cmd}, {user}, {host}, {port}, {key_path}</p>
+                  <p class="modal-hint">External app used for interactive SSH sessions (Open SSH).</p>
+                  <div id="ssh-client-mac" class="ssh-client-static hidden">
+                    <p class="ssh-client-label">Terminal.app</p>
+                  </div>
+                  <div id="ssh-client-win" class="hidden">
+                    <p class="modal-hint settings-subhead">Open sessions in:</p>
+                    <div class="seg-control" id="ssh-client-control" role="radiogroup" aria-label="SSH client">
+                      <button type="button" class="seg-opt" data-ssh-client="windows_power_shell">PowerShell</button>
+                      <button type="button" class="seg-opt" data-ssh-client="moba_xterm" id="ssh-moba-opt">MobaXterm</button>
+                    </div>
+                    <div class="ssh-moba-panel" id="ssh-moba-panel">
+                      <p class="modal-hint" id="ssh-moba-hint"></p>
+                      <p class="ssh-moba-path hidden" id="ssh-moba-path"></p>
+                      <div class="ssh-moba-actions">
+                        <button type="button" id="ssh-moba-locate" class="btn-ghost">Locate MobaXterm…</button>
+                        <button type="button" id="ssh-moba-clear" class="btn-ghost hidden">Clear saved path</button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div class="settings-tab-panel hidden" data-settings-panel="widget" role="tabpanel">
-                <div class="settings-section">
-                  <h3>Widget position</h3>
-                  <div class="seg-control" id="stack-mode-control" role="radiogroup" aria-label="Widget position">
-                    <button type="button" class="seg-opt" data-stack="behind">Behind</button>
-                    <button type="button" class="seg-opt" data-stack="normal">Normal</button>
-                    <button type="button" class="seg-opt" data-stack="on_top">On top</button>
-                  </div>
-                  <p class="modal-hint" id="stack-mode-hint"></p>
-                </div>
-                <div class="settings-section">
-                  <h3>Show on widget</h3>
-                  <div class="checkbox-grid" id="segment-toggles">
-                    <label><input type="checkbox" data-seg="cpu" /> CPU</label>
-                    <label><input type="checkbox" data-seg="mem" /> Memory</label>
-                    <label><input type="checkbox" data-seg="disk" /> Disk</label>
-                    <label><input type="checkbox" data-seg="net" /> Network</label>
-                    <label><input type="checkbox" data-seg="users" /> Users</label>
-                  </div>
-                </div>
-                <div class="settings-section">
-                  <h3>Metric style</h3>
-                  <p class="modal-hint">CPU and memory show as percent (e.g. 14%). Storage can show used/total, a bar, or both.</p>
-                  <div class="display-style-list" id="display-style-list">
-                    ${DISPLAY_SEGMENT_KEYS.map(
-                      (key) => `
-                    <div class="display-style-row" data-display-row="${key}">
-                      <span class="display-style-label">${DISPLAY_SEGMENT_LABELS[key]}</span>
-                      <div class="seg-control seg-control-compact" role="radiogroup" aria-label="${DISPLAY_SEGMENT_LABELS[key]} display">
-                        <button type="button" class="seg-opt" data-display="${key}" data-mode="number">Number</button>
-                        <button type="button" class="seg-opt" data-display="${key}" data-mode="bar">Bar</button>
-                        <button type="button" class="seg-opt" data-display="${key}" data-mode="both">Both</button>
-                      </div>
-                    </div>`,
-                    ).join("")}
-                  </div>
-                </div>
+                <div id="main-widget-settings-body"></div>
               </div>
               <div class="settings-tab-panel hidden" data-settings-panel="servers" role="tabpanel">
                 <div class="settings-section">
@@ -542,6 +515,11 @@ function renderMain(root: HTMLElement) {
   let diskSectionKey = "";
   let diagLogLines: string[] = [];
   let widgetPrefs: WidgetPrefs = cloneWidgetPrefs(DEFAULT_WIDGET_PREFS);
+  let sshClientInfo: SshClientInfo = {
+    moba_xterm_available: false,
+    moba_xterm_path: null,
+    moba_xterm_user_configured: false,
+  };
   const isWindows = navigator.userAgent.toLowerCase().includes("windows");
 
   function appendDiag(line: string) {
@@ -714,7 +692,55 @@ function renderMain(root: HTMLElement) {
     });
   }
 
-  function syncGeneralSettingsUi() {
+  async function refreshSshClientInfo() {
+    if (!isWindows) return;
+    try {
+      sshClientInfo = await getSshClientInfo();
+    } catch {
+      sshClientInfo = {
+        moba_xterm_available: false,
+        moba_xterm_path: null,
+        moba_xterm_user_configured: false,
+      };
+    }
+  }
+
+  function syncSshClientUi() {
+    $("ssh-client-mac").classList.toggle("hidden", isWindows);
+    $("ssh-client-win").classList.toggle("hidden", !isWindows);
+    if (!isWindows) return;
+
+    const active = effectiveWindowsSshPreset(widgetPrefs.ssh_client.preset);
+    document.querySelectorAll<HTMLButtonElement>("#ssh-client-control .seg-opt").forEach((btn) => {
+      const id = btn.getAttribute("data-ssh-client") as "windows_power_shell" | "moba_xterm";
+      const isActive = id === active;
+      btn.classList.toggle("active", isActive);
+      btn.setAttribute("aria-checked", isActive ? "true" : "false");
+      if (id === "moba_xterm") {
+        btn.disabled = !sshClientInfo.moba_xterm_available;
+      }
+    });
+
+    const hint = $("ssh-moba-hint");
+    const pathEl = $("ssh-moba-path");
+    const clearBtn = $("ssh-moba-clear");
+    if (sshClientInfo.moba_xterm_available && sshClientInfo.moba_xterm_path) {
+      hint.textContent = sshClientInfo.moba_xterm_user_configured
+        ? "Using your saved MobaXterm path."
+        : "MobaXterm detected automatically.";
+      pathEl.textContent = sshClientInfo.moba_xterm_path;
+      pathEl.classList.remove("hidden");
+      clearBtn.classList.toggle("hidden", !sshClientInfo.moba_xterm_user_configured);
+    } else {
+      hint.textContent =
+        "MobaXterm was not found. Use Locate to choose MobaXterm.exe (portable installs).";
+      pathEl.classList.add("hidden");
+      pathEl.textContent = "";
+      clearBtn.classList.add("hidden");
+    }
+  }
+
+  async function syncGeneralSettingsUi() {
     const launchEnabled = widgetPrefs.launch_at_login;
     ($("pref-launch-at-login") as HTMLInputElement).checked = launchEnabled;
     document.querySelectorAll<HTMLButtonElement>("#autostart-open-control .seg-opt").forEach((btn) => {
@@ -726,34 +752,8 @@ function renderMain(root: HTMLElement) {
     });
     $("autostart-open-wrap").classList.toggle("disabled", !launchEnabled);
     ($("server-poll-secs") as HTMLInputElement).value = String(widgetPrefs.server_poll_secs);
-    const presetSelect = $("ssh-client-preset") as HTMLSelectElement;
-    if (presetSelect.options.length === 0) {
-      const options = isWindows
-        ? [
-            ["system_default", "System default (Recommended)"],
-            ["windows_power_shell", "PowerShell"],
-            ["windows_terminal", "Windows Terminal"],
-            ["moba_xterm", "MobaXterm"],
-            ["pu_tty", "PuTTY"],
-            ["custom", "Custom command"],
-          ]
-        : [
-            ["system_default", "System default (Recommended)"],
-            ["mac_terminal", "Terminal.app"],
-            ["mac_i_term", "iTerm"],
-            ["custom", "Custom command"],
-          ];
-      for (const [value, label] of options) {
-        const opt = document.createElement("option");
-        opt.value = value;
-        opt.textContent = label;
-        presetSelect.appendChild(opt);
-      }
-    }
-    presetSelect.value = widgetPrefs.ssh_client.preset;
-    ($("ssh-custom-command") as HTMLInputElement).value = widgetPrefs.ssh_client.custom_command;
-    const custom = widgetPrefs.ssh_client.preset === "custom";
-    $("ssh-custom-command-wrap").classList.toggle("hidden", !custom);
+    await refreshSshClientInfo();
+    syncSshClientUi();
   }
 
   async function loadAboutBlock() {
@@ -829,28 +829,21 @@ function renderMain(root: HTMLElement) {
   }
 
   function syncWidgetSettingsUi() {
-    document.querySelectorAll<HTMLButtonElement>("#stack-mode-control .seg-opt").forEach((btn) => {
-      const mode = btn.getAttribute("data-stack") as StackMode;
-      btn.classList.toggle("active", mode === widgetPrefs.stack_mode);
-      btn.setAttribute("aria-checked", mode === widgetPrefs.stack_mode ? "true" : "false");
-    });
-    $("stack-mode-hint").textContent = stackModeHint(widgetPrefs.stack_mode);
-    document.querySelectorAll<HTMLInputElement>("#segment-toggles input[data-seg]").forEach((input) => {
-      const key = input.getAttribute("data-seg") as MetricSegmentKey;
-      input.checked = widgetPrefs.segments[key];
-      input.disabled = !canDisableSegment(widgetPrefs.segments, key);
-    });
-    document.querySelectorAll<HTMLButtonElement>("[data-display][data-mode]").forEach((btn) => {
-      const key = btn.getAttribute("data-display") as DisplaySegmentKey;
-      const mode = btn.getAttribute("data-mode") as MetricDisplay;
-      btn.classList.toggle("active", widgetPrefs.display[key] === mode);
-      btn.setAttribute("aria-checked", widgetPrefs.display[key] === mode ? "true" : "false");
-    });
-    document.querySelectorAll<HTMLElement>("[data-display-row]").forEach((row) => {
-      const key = row.getAttribute("data-display-row") as DisplaySegmentKey;
-      row.classList.toggle("disabled", !widgetPrefs.segments[key]);
-    });
+    const body = document.getElementById("main-widget-settings-body");
+    if (body) syncWidgetSettingsInContainer(body, widgetPrefs);
   }
+
+  const mainWidgetSettingsBody = $("main-widget-settings-body");
+  mainWidgetSettingsBody.innerHTML = widgetSettingsBodyHtml();
+  bindWidgetSettingsInContainer(
+    mainWidgetSettingsBody,
+    () => widgetPrefs,
+    (prefs) => {
+      widgetPrefs = cloneWidgetPrefs(prefs);
+      syncWidgetSettingsUi();
+      applyWidgetPrefs(prefs).catch(() => {});
+    },
+  );
 
   function clampPollSecs(raw: number): number {
     if (!Number.isFinite(raw)) return widgetPrefs.server_poll_secs;
@@ -859,7 +852,7 @@ function renderMain(root: HTMLElement) {
 
   async function openSettings(tab: SettingsTab = "general") {
     setSettingsTab(tab);
-    syncGeneralSettingsUi();
+    await syncGeneralSettingsUi();
     syncWidgetSettingsUi();
     void loadAboutBlock();
     await loadServersList();
@@ -1059,37 +1052,6 @@ function renderMain(root: HTMLElement) {
     });
   });
 
-  document.querySelectorAll("#stack-mode-control .seg-opt").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const mode = btn.getAttribute("data-stack") as StackMode;
-      applyWidgetPrefs({ ...widgetPrefs, stack_mode: mode }).catch(() => {});
-    });
-  });
-
-  document.querySelectorAll<HTMLInputElement>("#segment-toggles input[data-seg]").forEach((input) => {
-    input.addEventListener("change", () => {
-      const key = input.getAttribute("data-seg") as MetricSegmentKey;
-      const next = { ...widgetPrefs.segments, [key]: input.checked };
-      if (countEnabledMetrics(next) === 0) {
-        input.checked = widgetPrefs.segments[key];
-        return;
-      }
-      applyWidgetPrefs({ ...widgetPrefs, segments: next }).catch(() => {});
-    });
-  });
-
-  document.querySelectorAll<HTMLButtonElement>("[data-display][data-mode]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const key = btn.getAttribute("data-display") as DisplaySegmentKey;
-      const mode = btn.getAttribute("data-mode") as MetricDisplay;
-      if (!widgetPrefs.segments[key]) return;
-      applyWidgetPrefs({
-        ...widgetPrefs,
-        display: { ...widgetPrefs.display, [key]: mode },
-      }).catch(() => {});
-    });
-  });
-
   $("pref-launch-at-login").addEventListener("change", () => {
     const enabled = ($("pref-launch-at-login") as HTMLInputElement).checked;
     applyWidgetPrefs({ ...widgetPrefs, launch_at_login: enabled }).catch(() => {});
@@ -1102,20 +1064,55 @@ function renderMain(root: HTMLElement) {
     applyWidgetPrefs({ ...widgetPrefs, server_poll_secs: secs }).catch(() => {});
   });
 
-  $("ssh-client-preset").addEventListener("change", () => {
-    const preset = ($("ssh-client-preset") as HTMLSelectElement).value as SshClientPreset;
+  $("ssh-client-control").addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-ssh-client]");
+    if (!btn || btn.disabled) return;
+    const preset = btn.getAttribute("data-ssh-client") as SshClientPreset;
+    if (preset === "moba_xterm" && !sshClientInfo.moba_xterm_available) return;
     applyWidgetPrefs({
       ...widgetPrefs,
       ssh_client: { ...widgetPrefs.ssh_client, preset },
     }).catch(() => {});
   });
 
-  $("ssh-custom-command").addEventListener("change", () => {
-    const custom_command = ($("ssh-custom-command") as HTMLInputElement).value.trim();
-    applyWidgetPrefs({
-      ...widgetPrefs,
-      ssh_client: { ...widgetPrefs.ssh_client, custom_command },
-    }).catch(() => {});
+  $("ssh-moba-locate").addEventListener("click", () => {
+    void (async () => {
+      const selected = await openFileDialog({
+        title: "Locate MobaXterm.exe",
+        filters: [{ name: "MobaXterm", extensions: ["exe"] }],
+        multiple: false,
+      });
+      if (!selected || Array.isArray(selected)) return;
+      const base = selected.replace(/\\/g, "/").split("/").pop()?.toLowerCase();
+      if (base !== "mobaxterm.exe") {
+        alert("Please select MobaXterm.exe.");
+        return;
+      }
+      await applyWidgetPrefs({
+        ...widgetPrefs,
+        ssh_client: {
+          preset: "moba_xterm",
+          moba_xterm_path: selected,
+        },
+      });
+      await refreshSshClientInfo();
+      syncSshClientUi();
+    })();
+  });
+
+  $("ssh-moba-clear").addEventListener("click", () => {
+    void (async () => {
+      await applyWidgetPrefs({
+        ...widgetPrefs,
+        ssh_client: {
+          ...widgetPrefs.ssh_client,
+          moba_xterm_path: null,
+          preset: "windows_power_shell",
+        },
+      });
+      await refreshSshClientInfo();
+      syncSshClientUi();
+    })();
   });
 
   document.querySelectorAll("#autostart-open-control .seg-opt").forEach((btn) => {
@@ -1134,14 +1131,14 @@ function renderMain(root: HTMLElement) {
 
   listen<WidgetPrefs>("widget-prefs-changed", (e) => {
     widgetPrefs = cloneWidgetPrefs(e.payload);
-    syncGeneralSettingsUi();
+    void syncGeneralSettingsUi();
     syncWidgetSettingsUi();
   });
 
   getWidgetPrefs()
-    .then((prefs) => {
+    .then(async (prefs) => {
       widgetPrefs = cloneWidgetPrefs(prefs);
-      syncGeneralSettingsUi();
+      await syncGeneralSettingsUi();
       syncWidgetSettingsUi();
     })
     .catch(() => {});
@@ -1372,6 +1369,11 @@ function renderWidget(root: HTMLElement) {
     applyWindowSize();
   }
 
+  function openWidgetSettings() {
+    hideCtxMenu();
+    invoke("show_widget_settings_window").catch(() => {});
+  }
+
   function fillCtxMenu(mainOpen: boolean, sourceAlias: string | null) {
     const remote = sourceAlias && sourceAlias !== "local" && knownRemoteAliases.has(sourceAlias);
     const openSshItem = remote
@@ -1379,9 +1381,11 @@ function renderWidget(root: HTMLElement) {
       : "";
     ctxMenu.innerHTML = mainOpen
       ? `${openSshItem}
+         <button type="button" data-ctx="widget-settings" role="menuitem">Widget settings…</button>
          <button type="button" data-ctx="hide" role="menuitem">Hide widget</button>
          <button type="button" data-ctx="quit" class="danger" role="menuitem">Quit WatchPost</button>`
       : `${openSshItem}
+         <button type="button" data-ctx="widget-settings" role="menuitem">Widget settings…</button>
          <button type="button" data-ctx="open" role="menuitem">Open App</button>
          <button type="button" data-ctx="close" class="danger" role="menuitem">Close</button>`;
   }
@@ -1454,8 +1458,13 @@ function renderWidget(root: HTMLElement) {
         break;
       case "open-ssh":
         if (ctxSourceAlias && ctxSourceAlias !== "local") {
-          openSshSessionByAlias(ctxSourceAlias).catch(() => {});
+          openSshSessionByAlias(ctxSourceAlias).catch((e) =>
+            alert(`Could not open SSH: ${e}`),
+          );
         }
+        break;
+      case "widget-settings":
+        openWidgetSettings();
         break;
       case "close":
         // Main is hidden — hiding the widget quits the app (M3c).
@@ -1468,7 +1477,18 @@ function renderWidget(root: HTMLElement) {
     if (e.key === "Escape" && ctxMenuOpen) hideCtxMenu();
   });
 
+  stack.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".widget-ssh-btn");
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const source = btn.getAttribute("data-source");
+    if (!source || source === "local") return;
+    openSshSessionByAlias(source).catch((err) => alert(`Could not open SSH: ${err}`));
+  });
+
   stack.addEventListener("dblclick", (e) => {
+    if ((e.target as HTMLElement).closest(".widget-ssh-btn")) return;
     if ((e.target as HTMLElement).closest(".widget-strip")) {
       invoke("show_main_window").catch(() => {});
     }
@@ -1500,6 +1520,7 @@ function renderWidget(root: HTMLElement) {
   function rebuildStack(sources: { source: string; label: string }[]) {
     const displayLabels = sources.map((s) => widgetDisplayLabel(s.source, s.label));
     syncNameColumnWidth(displayLabels);
+    stack.classList.toggle("has-ssh-actions", widgetPrefs.show_ssh_button);
     stack.innerHTML = sources
       .map((s) =>
         widgetStripHtml(
@@ -1507,6 +1528,7 @@ function renderWidget(root: HTMLElement) {
           widgetDisplayLabel(s.source, s.label),
           widgetPrefs.segments,
           widgetPrefs.display,
+          widgetPrefs.show_ssh_button,
         ),
       )
       .join("");
@@ -1651,12 +1673,77 @@ function renderWidget(root: HTMLElement) {
   refreshSources().catch(() => {});
 }
 
+//  WIDGET SETTINGS WINDOW
+// =====================================================================
+function renderWidgetSettings(root: HTMLElement) {
+  document.body.classList.add("widget-settings-mode");
+  root.classList.add("widget-settings-root");
+  root.innerHTML = `
+    <div class="widget-settings-window">
+      <header class="widget-settings-window-header">
+        <h1>Widget settings</h1>
+        <p class="modal-hint">Changes apply to the desktop widget immediately.</p>
+      </header>
+      <div class="widget-settings-window-body" id="widget-settings-body"></div>
+      <footer class="widget-settings-window-footer">
+        <button type="button" id="widget-settings-done">Done</button>
+      </footer>
+    </div>`;
+
+  const body = document.getElementById("widget-settings-body")!;
+  let widgetPrefs: WidgetPrefs = cloneWidgetPrefs(DEFAULT_WIDGET_PREFS);
+
+  body.innerHTML = widgetSettingsBodyHtml();
+
+  async function refreshFromDisk() {
+    try {
+      widgetPrefs = cloneWidgetPrefs(await getWidgetPrefs());
+      syncWidgetSettingsInContainer(body, widgetPrefs);
+    } catch {
+      /* keep last prefs */
+    }
+  }
+
+  bindWidgetSettingsInContainer(
+    body,
+    () => widgetPrefs,
+    async (prefs) => {
+      widgetPrefs = cloneWidgetPrefs(prefs);
+      syncWidgetSettingsInContainer(body, widgetPrefs);
+      await setWidgetPrefs(prefs);
+    },
+  );
+
+  document.getElementById("widget-settings-done")!.addEventListener("click", () => {
+    invoke("close_widget_settings_window").catch(() => {});
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      invoke("close_widget_settings_window").catch(() => {});
+    }
+  });
+
+  listen<WidgetPrefs>("widget-prefs-changed", (e) => {
+    widgetPrefs = cloneWidgetPrefs(e.payload);
+    syncWidgetSettingsInContainer(body, widgetPrefs);
+  });
+
+  listen("widget-settings-shown", () => {
+    void refreshFromDisk();
+  });
+
+  void refreshFromDisk();
+}
+
 // ---------- bootstrap ----------
 window.addEventListener("DOMContentLoaded", () => {
   const root = document.getElementById("app")!;
   const label = getCurrentWindow().label;
   if (label === "widget") {
     renderWidget(root);
+  } else if (label === "widget-settings") {
+    renderWidgetSettings(root);
   } else {
     renderMain(root);
   }

@@ -3,7 +3,7 @@ mod ssh;
 mod store;
 
 use serde::Serialize;
-use ssh::{DiagnoseResult, SshLaunchOutput, TestResult};
+use ssh::{DiagnoseResult, SshClientInfo, SshLaunchOutput, TestResult};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -103,7 +103,7 @@ fn data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 }
 
 fn any_window_visible(app: &AppHandle) -> bool {
-    ["main", "widget"].iter().any(|label| {
+    ["main", "widget", "widget-settings"].iter().any(|label| {
         app.get_webview_window(label)
             .and_then(|w| w.is_visible().ok())
             .unwrap_or(false)
@@ -374,8 +374,20 @@ fn get_ssh_setup_info() -> SshSetupInfo {
 }
 
 #[tauri::command]
+fn get_ssh_client_info(app: AppHandle) -> Result<SshClientInfo, String> {
+    let prefs = store::load_widget_prefs(data_dir(&app)?)?;
+    Ok(ssh::ssh_client_info(&prefs.ssh_client))
+}
+
+#[tauri::command]
 fn get_widget_prefs(app: AppHandle) -> Result<WidgetPrefs, String> {
-    let mut prefs = store::load_widget_prefs(data_dir(&app)?)?;
+    let dir = data_dir(&app)?;
+    let mut prefs = store::load_widget_prefs(dir.clone())?;
+    let before = prefs.ssh_client.clone();
+    ssh::normalize_ssh_client_prefs(&mut prefs.ssh_client);
+    if prefs.ssh_client != before {
+        store::save_widget_prefs(dir, &prefs)?;
+    }
     if let Some(enabled) = read_autostart_enabled(&app) {
         prefs.launch_at_login = enabled;
     }
@@ -383,7 +395,8 @@ fn get_widget_prefs(app: AppHandle) -> Result<WidgetPrefs, String> {
 }
 
 #[tauri::command]
-fn set_widget_prefs(app: AppHandle, prefs: WidgetPrefs) -> Result<(), String> {
+fn set_widget_prefs(app: AppHandle, mut prefs: WidgetPrefs) -> Result<(), String> {
+    ssh::normalize_ssh_client_prefs(&mut prefs.ssh_client);
     let prev = store::load_widget_prefs(data_dir(&app)?).ok();
     store::save_widget_prefs(data_dir(&app)?, &prefs)?;
     if prev.map(|p| p.launch_at_login) != Some(prefs.launch_at_login) {
@@ -430,6 +443,30 @@ fn begin_widget_interaction(app: AppHandle) -> Result<(), String> {
 fn end_widget_interaction(app: AppHandle) -> Result<(), String> {
     // Restore persisted stack behavior after temporary interaction lift.
     apply_widget_prefs_to_window(&app)
+}
+
+#[tauri::command]
+fn show_widget_settings_window(app: AppHandle) -> Result<(), String> {
+    let win = app
+        .get_webview_window("widget-settings")
+        .ok_or_else(|| "widget-settings window not found".to_string())?;
+    if !win.is_visible().map_err(|e| e.to_string())? {
+        win.center().map_err(|e| e.to_string())?;
+        win.show().map_err(|e| e.to_string())?;
+    }
+    win.set_focus().map_err(|e| e.to_string())?;
+    let _ = app.emit("widget-settings-shown", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn close_widget_settings_window(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("widget-settings") {
+        if win.is_visible().map_err(|e| e.to_string())? {
+            win.hide().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 /// Hide the widget window (no-op if already hidden).
@@ -592,6 +629,8 @@ pub fn run() {
             hide_widget,
             begin_widget_interaction,
             end_widget_interaction,
+            show_widget_settings_window,
+            close_widget_settings_window,
             quit_app,
             is_main_visible,
             show_main_window,
@@ -604,20 +643,27 @@ pub fn run() {
             test_server,
             diagnose_server,
             get_ssh_setup_info,
+            get_ssh_client_info,
             get_app_about,
             get_widget_prefs,
             set_widget_prefs,
         ])
         .on_window_event(|window, event| {
-            if window.label() != "main" {
-                return;
-            }
             if let WindowEvent::CloseRequested { api, .. } = event {
-                // Hide instead of destroy so the widget can reopen the dashboard.
-                api.prevent_close();
-                HIDING_MAIN.store(true, Ordering::SeqCst);
-                let _ = window.hide();
-                on_window_hidden(window.app_handle());
+                match window.label() {
+                    "main" => {
+                        // Hide instead of destroy so the widget can reopen the dashboard.
+                        api.prevent_close();
+                        HIDING_MAIN.store(true, Ordering::SeqCst);
+                        let _ = window.hide();
+                        on_window_hidden(window.app_handle());
+                    }
+                    "widget-settings" => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                    _ => {}
+                }
             }
         })
         .setup(|app| {

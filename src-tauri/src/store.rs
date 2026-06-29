@@ -173,6 +173,13 @@ pub struct WidgetPrefs {
     pub server_poll_secs: u64,
     #[serde(default)]
     pub ssh_client: SshClientPrefs,
+    /// Small per-strip SSH launcher on remote servers in the widget.
+    #[serde(default = "default_show_ssh_button")]
+    pub show_ssh_button: bool,
+}
+
+fn default_show_ssh_button() -> bool {
+    true
 }
 
 fn default_show_widget_on_startup() -> bool {
@@ -210,10 +217,14 @@ impl Default for SshClientPreset {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SshClientPrefs {
     #[serde(default)]
     pub preset: SshClientPreset,
+    /// User-selected MobaXterm.exe path (Windows). Auto-detect is used when unset.
+    #[serde(default)]
+    pub moba_xterm_path: Option<String>,
+    /// Legacy field; ignored.
     #[serde(default)]
     pub custom_command: String,
 }
@@ -222,6 +233,7 @@ impl Default for SshClientPrefs {
     fn default() -> Self {
         Self {
             preset: SshClientPreset::SystemDefault,
+            moba_xterm_path: None,
             custom_command: String::new(),
         }
     }
@@ -237,6 +249,7 @@ impl Default for WidgetPrefs {
             show_widget_on_startup: true,
             server_poll_secs: default_server_poll_secs(),
             ssh_client: SshClientPrefs::default(),
+            show_ssh_button: default_show_ssh_button(),
         }
     }
 }
@@ -306,6 +319,7 @@ mod tests {
             show_widget_on_startup: true,
             server_poll_secs: 3,
             ssh_client: SshClientPrefs::default(),
+            show_ssh_button: true,
         };
         assert!(validate_widget_prefs(&prefs).is_err());
     }
@@ -318,6 +332,7 @@ mod tests {
         assert_eq!(prefs.server_poll_secs, 3);
         assert_eq!(prefs.ssh_client.preset, SshClientPreset::SystemDefault);
         assert!(prefs.ssh_client.custom_command.is_empty());
+        assert!(prefs.show_ssh_button);
     }
 
     #[test]

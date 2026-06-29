@@ -7,7 +7,8 @@
   ],
   "windows": [
     "main",
-    "widget"
+    "widget",
+    "widget-settings"
   ],
   "permissions": [
     "autostart:default"

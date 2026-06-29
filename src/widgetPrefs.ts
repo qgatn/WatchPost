@@ -2,19 +2,19 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type StackMode = "behind" | "normal" | "on_top";
 export type MetricDisplay = "number" | "bar" | "both";
-export type SshClientPreset =
-  | "system_default"
-  | "mac_terminal"
-  | "mac_i_term"
-  | "windows_power_shell"
-  | "windows_terminal"
-  | "moba_xterm"
-  | "pu_tty"
-  | "custom";
+export type SshClientPreset = "windows_power_shell" | "moba_xterm" | "mac_terminal" | "system_default";
 
 export interface SshClientPrefs {
   preset: SshClientPreset;
-  custom_command: string;
+  moba_xterm_path?: string | null;
+  /** Legacy field; ignored. */
+  custom_command?: string;
+}
+
+export interface SshClientInfo {
+  moba_xterm_available: boolean;
+  moba_xterm_path?: string | null;
+  moba_xterm_user_configured: boolean;
 }
 
 export interface WidgetSegments {
@@ -39,6 +39,7 @@ export interface WidgetPrefs {
   show_widget_on_startup: boolean;
   server_poll_secs: number;
   ssh_client: SshClientPrefs;
+  show_ssh_button: boolean;
 }
 
 export const METRIC_SEGMENT_KEYS = ["cpu", "mem", "disk", "net", "users"] as const;
@@ -66,7 +67,8 @@ export const DEFAULT_WIDGET_PREFS: WidgetPrefs = {
   launch_at_login: false,
   show_widget_on_startup: true,
   server_poll_secs: 3,
-  ssh_client: { preset: "system_default", custom_command: "" },
+  ssh_client: { preset: "system_default", moba_xterm_path: null },
+  show_ssh_button: true,
 };
 
 export function cloneWidgetPrefs(prefs: WidgetPrefs): WidgetPrefs {
@@ -77,7 +79,12 @@ export function cloneWidgetPrefs(prefs: WidgetPrefs): WidgetPrefs {
     launch_at_login: prefs.launch_at_login,
     show_widget_on_startup: prefs.show_widget_on_startup,
     server_poll_secs: prefs.server_poll_secs,
-    ssh_client: { ...prefs.ssh_client },
+    ssh_client: {
+      preset: prefs.ssh_client.preset,
+      moba_xterm_path: prefs.ssh_client.moba_xterm_path ?? null,
+      custom_command: prefs.ssh_client.custom_command,
+    },
+    show_ssh_button: prefs.show_ssh_button,
   };
 }
 
@@ -107,4 +114,12 @@ export function getWidgetPrefs(): Promise<WidgetPrefs> {
 
 export function setWidgetPrefs(prefs: WidgetPrefs): Promise<void> {
   return invoke("set_widget_prefs", { prefs });
+}
+
+export function getSshClientInfo(): Promise<SshClientInfo> {
+  return invoke<SshClientInfo>("get_ssh_client_info");
+}
+
+export function effectiveWindowsSshPreset(preset: SshClientPreset): "windows_power_shell" | "moba_xterm" {
+  return preset === "moba_xterm" ? "moba_xterm" : "windows_power_shell";
 }
